@@ -458,3 +458,54 @@ Global policy settings harming merchant-specific customer experience or ignoring
 
 When reconsider:
 Do not reconsider multi-tenant policy support.
+
+## D-028: Use bounded LangGraph agent for strategy selection
+
+Decision:
+Use LangGraph to orchestrate a bounded recovery agent that selects from a strict enum of permitted actions.
+
+Reason:
+Agent behavior must be structured, observable, and safe. Free-form LLM text cannot be executed in a financial workflow.
+
+Tradeoff:
+More architectural overhead than a direct LLM API call.
+
+Failure mode avoided:
+Unvalidated LLM output or hallucinated actions influencing financial workflows.
+
+When reconsider:
+Only the orchestration library may change, not the bounded-agent principle.
+
+## D-029: Mock LLM provider for local development and testing
+
+Decision:
+Use a mock LLM provider with controllable failure modes (normal, timeout, malformed, illegal_action) for Milestone 8.
+
+Reason:
+Hackathon tests must be deterministic, offline, and cheap.
+
+Tradeoff:
+The mock does not measure real LLM quality or prompt engineering effectiveness.
+
+Failure mode avoided:
+Flaky tests, network costs, and provider outages blocking core development.
+
+When reconsider:
+When integrating a real provider behind the exact same adapter boundary (`app/agents/llm.py`).
+
+## D-030: Final policy check after agent decision
+
+Decision:
+Every agent-selected action is revalidated by the deterministic policy engine before being used.
+
+Reason:
+LLM output may be stale, invalid, or attempt to bypass business limits.
+
+Tradeoff:
+Extra policy evaluation cost per task.
+
+Failure mode avoided:
+The agent bypassing limits, terminal-state protection, or high-value escalation rules.
+
+When reconsider:
+Do not reconsider. Policy is the final authority.

@@ -249,3 +249,31 @@ ORMs can sometimes obscure what the underlying database engine is actually doing
 ### What we learned
 1. Database-level `ON DELETE CASCADE` happens independently of the ORM's session tracking.
 2. In financial systems, we rarely hard-delete records anyway; we transition them to terminal states (e.g., `STOPPED`, `RECOVERED`) and archive them. Hard deletes are mostly for local test/lab cleanup.
+
+---
+
+## C-010: Stale test contract causing KeyError after schema evolution
+
+### Problem
+`pytest` failed with `KeyError: 'policy_approved'` in `test_recovery_task.py` after implementing Milestone 8.
+
+### Symptoms
+Four tests failed when trying to read `result["policy_approved"]` from the Celery task result dictionary.
+
+### Root cause
+Milestone 8 changed the Celery task result schema to include agent-specific fields (`agent_source`, `agent_action`, `final_policy_approved`). The Milestone 7 tests were still asserting against the old schema.
+
+### Investigation
+The error was a Python dictionary key lookup failure, not a database, Redis, or LangGraph failure. The task executed successfully but returned a different response shape.
+
+### Fix
+Updated `tests/test_recovery_task.py` to assert against the new Milestone 8 schema (`final_policy_approved`, `agent_source`, etc.).
+
+### Why the fix worked
+Aligned the test expectations with the actual task response contract.
+
+### Tradeoff
+No production code was changed; only test expectations were updated.
+
+### What we learned
+When changing internal task result schemas, all contract tests and downstream consumers must be updated in the same change set to prevent silent breakages.

@@ -133,3 +133,24 @@ The recovery engine optimizes for *recovery probability*, but the policy engine 
 
 Correct future design:
 Never execute a recovery engine or LLM recommendation without passing it through the deterministic policy engine first.
+
+## Lab 7: LLM Failure Modes and Deterministic Fallback
+
+Goal:
+Prove that AI provider failures (timeouts, malformed JSON, hallucinated actions) do not crash the recovery system or compromise financial correctness.
+
+Experiment:
+Run `python labs/llm_failure_lab.py`.
+1. Configure the mock LLM to `normal` mode: Agent successfully parses JSON and selects an action.
+2. Configure to `timeout` mode: Agent catches the timeout exception and falls back.
+3. Configure to `malformed` mode: Agent catches the JSON decode error and falls back.
+4. Configure to `illegal_action` mode (e.g., LLM outputs `REFUND_CUSTOMER`): Pydantic schema validation rejects the enum, and the agent falls back.
+
+Expected result:
+In all failure scenarios, the agent source becomes `deterministic_fallback`, and the system safely defaults to the policy engine's recommended action (e.g., `STOP`).
+
+Lesson:
+AI failure reduces optimization quality, but it must never take down revenue recovery. Strict schema validation and deterministic fallbacks are mandatory for production Agentic AI.
+
+Correct future design:
+Always wrap LLM calls in strict Pydantic schemas and provide a deterministic fallback path that guarantees forward progress.

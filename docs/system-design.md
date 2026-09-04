@@ -163,3 +163,32 @@ If a candidate action is denied, the policy engine returns a safe fallback:
 
 ### Merchant Policies
 Merchant policies are stored in the `merchant_policies` table. Each merchant has exactly one policy row, allowing different merchants to configure their own risk tolerances and customer contact limits. Default policies are created automatically when a recovery case is first processed.
+
+### Bounded Agentic AI (Milestone 8)
+RecoverAI integrates Agentic AI strictly for contextual strategy selection, ensuring AI never owns financial correctness or execution.
+
+### Agent Role & Boundaries
+The LangGraph agent participates only in strategy selection. It does not own state transitions, policy enforcement, money movement, or external execution. The agent is restricted to a strict enum of supported actions (WAIT, CREATE_PAYMENT_LINK, SEND_REMINDER, STOP, ESCALATE).
+
+### Agent Flow
+1. AgentDecisionRequest is built with bounded context (amount, failure category, action counts, engine candidate, deterministic fallback).
+2. The LangGraph graph executes decide -> validate nodes.
+3. The LLM adapter (app/agents/llm.py) calls the provider (mock or real) with a strict timeout.
+4. Output is validated against a strict Pydantic schema (AgentDecisionOutput).
+5. A final policy check revalidates the agent-selected action.
+
+### Structured Output & Fallback Model
+The agent must return structured JSON. Invalid JSON, timeouts, or illegal actions (e.g., REFUND_CUSTOMER) are immediately rejected.
+If the agent fails or its suggestion is denied by the final policy check, the system falls back to the deterministic policy engine's decision.
+Fallback reasons include: llm_disabled, llm_failed, invalid_agent_action, agent_graph_failed.
+
+### Observability
+The audit payload now captures the full decision lineage:
+
+1. engine_action (deterministic candidate)
+2. deterministic_action (policy fallback)
+3. agent_action (LLM suggestion)
+4. agent_source (llm or deterministic_fallback)
+5. final_action (actual permitted action)
+
+This supports future ML training by recording context-action-outcome tuples and comparing deterministic vs. agent-assisted recovery rates.
