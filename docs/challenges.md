@@ -190,3 +190,33 @@ Slightly more boilerplate code to instantiate sessions.
 
 ### What we learned
 A SQLAlchemy `Session` represents a single unit of work. Do not reuse session objects across logically separate transactions. Always request a fresh session for a new transactional boundary.
+
+---
+
+## C-008: Celery worker crashes on Windows startup
+
+### Problem
+Running `celery -A app.celery_app worker` on Windows immediately crashed with a `ValueError` or `NotImplementedError` related to process forking.
+
+### Symptoms
+The worker process exited instantly. Logs showed errors originating from the `prefork` pool trying to use `os.fork()`.
+
+### Root cause
+Celery's default execution pool (`prefork`) relies on the POSIX `fork()` system call to spawn child worker processes. Windows does not support `os.fork()`.
+
+### Investigation
+Checked Celery documentation regarding Windows compatibility. Confirmed that `prefork` is unsupported on Windows natively.
+
+### Fix
+Added the `--pool=solo` flag to the local Windows worker startup command:
+`celery -A app.celery_app:celery_app worker --loglevel=info --pool=solo -Q recoverai`
+
+### Why the fix worked
+The `solo` pool runs tasks synchronously in the main process without attempting to fork child processes, bypassing the Windows OS limitation.
+
+### Tradeoff
+The `solo` pool cannot process tasks concurrently. It is strictly for local development and debugging.
+
+### What we learned
+1. Celery on Windows is a local development convenience, not a production pattern.
+2. Production workers must run in Linux containers where the default `prefork` pool (or `gevent`/`eventlet`) can properly manage concurrency and process isolation.

@@ -1,7 +1,7 @@
 # RecoverAI System Design
 
 ## Status
-Milestone 3 Complete. Core Data Model, Webhook Ingestion, and Transactional Outbox established.
+Milestone 4 Complete. Core Data Model, Webhook Ingestion, Transactional Outbox, and Async Worker Processing established.
 
 ## Goal
 RecoverAI detects failed payments and safely coordinates bounded recovery interventions.
@@ -62,10 +62,27 @@ If `payment.captured` arrives before `payment.failed`, the system does not creat
 ## Transactional Outbox
 The `outbox_events` table stores future work inside the exact same database transaction as business state. 
 This prevents the dual-write problem where a database commit succeeds but a queue publish fails, resulting in lost recovery work.
-A background dispatcher (Milestone 4) will read `PENDING` outbox rows and publish them to Redis.
+
+## Async Processing (Milestone 4)
+RecoverAI decouples webhook ingestion from heavy recovery processing using an asynchronous worker architecture.
+
+### Worker Flow
+1. The Webhook API commits business state and an `outbox_events` row to PostgreSQL.
+2. The Outbox Dispatcher continuously polls for `PENDING` outbox rows using `FOR UPDATE SKIP LOCKED`.
+3. The Dispatcher publishes a Celery task to the Redis broker and marks the outbox row `PUBLISHED`.
+4. Celery Workers consume tasks from the `recoverai` queue.
+5. Workers load the recovery case, validate the current state machine status, and transition it (e.g., `ELIGIBLE` -> `ANALYSING`).
+6. Workers write an `audit_events` record to prove execution.
+
+### Delivery & Retry Model
+- **At-Least-Once Delivery**: The system assumes tasks may be delivered more than once. Workers are strictly idempotent.
+- **Late Acknowledgement**: `task_acks_late=True` ensures tasks are only removed from the queue after successful database commits.
+- **Bounded Retries**: Transient failures (e.g., DB connection blips) trigger retries with exponential backoff and jitter to prevent thundering herds.
+- **Backpressure**: If workers process slower than webhooks arrive, the Redis queue safely absorbs the burst while the API remains responsive.
 
 ## Infrastructure
 - FastAPI (Stateless API)
 - PostgreSQL 16 (Source of Truth, Port 5433 locally to avoid host conflicts)
-- Redis 7 (Ephemeral Queue/Cache)
+- Redis 7 (Ephemeral Queue Broker / Cache)
+- Celery (Distributed Task Queue / Workers)
 - Alembic (Schema Migrations)

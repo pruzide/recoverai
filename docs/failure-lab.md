@@ -42,3 +42,28 @@ Never commit business state and then separately publish work. Put the work inten
 
 Correct future design:
 Use the `outbox_events` table to store work intent, and a separate background worker to read pending outbox rows and publish them to Redis/Celery.
+
+## Lab 3: Redis Outage and Outbox Durability
+
+Goal:
+Prove that a Redis broker outage delays async processing but does not permanently lose durable recovery work.
+
+Experiment:
+1. Send a `payment.failed` webhook to the API.
+2. Verify the `outbox_events` table contains a new row with `status = PENDING`.
+3. Stop the Redis container (`docker compose stop redis`).
+4. Run the outbox dispatcher manually (`python scripts/dispatch_once.py`).
+5. Observe the dispatcher fail to publish, but the outbox row remains `PENDING` with `attempts` incremented and `last_error` populated.
+6. Restart Redis (`docker compose start redis`).
+7. Run the dispatcher again.
+8. Observe the outbox row transition to `PUBLISHED`.
+9. Verify the Celery worker picks up the task and transitions the recovery case to `ANALYSING`.
+
+Expected result:
+Redis downtime causes a temporary processing delay. Once Redis recovers, the dispatcher successfully publishes the durable work intent, and the worker completes the business flow.
+
+Lesson:
+The queue broker (Redis) is merely a transport mechanism. PostgreSQL owns the durable work intent. A queue failure increases latency but does not cause data loss.
+
+Correct future design:
+Always write work intent to the transactional outbox before attempting to publish to the message broker.

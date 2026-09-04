@@ -213,7 +213,7 @@ Reason:
 Prevents the dual-write problem where business state commits but queue publishing fails.
 
 Tradeoff:
-Requires a background outbox dispatcher (to be built in Milestone 4).
+Requires a background outbox dispatcher (built in Milestone 4).
 
 Failure mode avoided:
 Committed recovery cases with no worker processing.
@@ -254,3 +254,71 @@ Valid provider webhooks being rejected due to serialization mismatches, or fake 
 
 When reconsider:
 Never.
+
+## D-016: Use Celery for async recovery work
+
+Decision:
+Use Celery workers and a Redis broker for background recovery processing instead of FastAPI BackgroundTasks.
+
+Reason:
+Recovery work is financially critical and must survive API restarts, support retries, and scale horizontally.
+
+Tradeoff:
+Adds operational complexity (another process and broker to manage).
+
+Failure mode avoided:
+Lost background work and blocked webhook handling if the API process crashes.
+
+When reconsider:
+Only if recovery work becomes trivial and non-critical.
+
+## D-017: Use a separate outbox dispatcher process
+
+Decision:
+Use a dedicated background process to poll the outbox table and publish events to Celery.
+
+Reason:
+The webhook API must remain lightweight and strictly bounded in latency. Publishing to a queue can fail or lag without blocking provider HTTP responses.
+
+Tradeoff:
+Requires running and monitoring an additional process.
+
+Failure mode avoided:
+Webhook latency spikes and direct dual-write failures.
+
+When reconsider:
+The dispatcher logic may move into a scheduler service later, but the decoupled polling principle remains.
+
+## D-018: Use late task acknowledgement
+
+Decision:
+Configure Celery with `task_acks_late=True` and `task_reject_on_worker_lost=True`.
+
+Reason:
+Tasks should only be removed from the queue *after* successful execution, not when they are merely fetched by a worker.
+
+Tradeoff:
+Duplicate task delivery is possible if a worker crashes mid-execution.
+
+Failure mode avoided:
+Permanent task loss when a worker process is killed or crashes during database operations.
+
+When reconsider:
+Only for non-critical tasks where duplicate execution is strictly worse than task loss.
+
+## D-019: Use bounded retries with exponential backoff and jitter
+
+Decision:
+Retry transient task failures (like database connection blips) using exponential backoff with randomized jitter.
+
+Reason:
+Prevents "thundering herd" scenarios where thousands of failed tasks retry at the exact same millisecond and overwhelm a recovering dependency.
+
+Tradeoff:
+Increases the total time to recover from a prolonged outage.
+
+Failure mode avoided:
+Retry storms that permanently take down downstream services like PostgreSQL or external APIs.
+
+When reconsider:
+Tune the base delay, cap, and max retries based on production observability metrics.

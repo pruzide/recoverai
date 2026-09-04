@@ -1,4 +1,4 @@
-import os
+﻿import os
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
@@ -18,6 +18,12 @@ from app.models.base import Base
 
 # Import all models so Base.metadata knows every table.
 import app.models  # noqa: F401
+
+from app.celery_app import celery_app
+
+# Run Celery tasks eagerly in tests without requiring Redis.
+celery_app.conf.task_always_eager = True
+celery_app.conf.task_eager_propagates = True
 
 
 @pytest.fixture(scope="session")

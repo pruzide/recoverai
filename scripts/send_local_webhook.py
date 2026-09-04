@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import hmac
 import json
 import sys
@@ -61,6 +61,9 @@ def main():
 
     print(response.status_code)
     print(response.text)
+
+    if response.status_code != 200:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

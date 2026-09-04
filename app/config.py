@@ -1,4 +1,4 @@
-from functools import lru_cache
+﻿from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5432/recoverai"
-    test_database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5432/recoverai_test"
+    database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai"
+    test_database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai_test"
 
     db_pool_size: int = 5
     db_max_overflow: int = 5
@@ -30,6 +30,14 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
     redis_socket_timeout: int = 2
+
+    celery_broker_url: str = "redis://localhost:6379/1"
+    celery_result_backend: str = "redis://localhost:6379/2"
+    celery_task_default_queue: str = "recoverai"
+
+    outbox_dispatch_batch_size: int = 10
+    outbox_dispatch_interval_seconds: float = 2.0
+    outbox_max_dispatch_attempts: int = 10
 
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
