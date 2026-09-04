@@ -5,10 +5,10 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.celery_app import celery_app
 from app.db import get_session_factory
-from app.domain.recovery import transition_recovery_case
 from app.domain.recovery_state import InvalidStateTransition
 from app.models import AuditEvent, OutboxEvent, RecoveryCase
 from app.models.enums import RecoveryCaseStatus
+from app.services.recovery_cases import atomic_transition_recovery_case
 from app.tasks.backoff import exponential_backoff_with_jitter
 
 
@@ -67,11 +67,24 @@ def _handle_recovery_case_eligible(session, outbox: OutboxEvent) -> dict:
         }
 
     try:
-        transition_recovery_case(case, RecoveryCaseStatus.ANALYSING)
+        rowcount = atomic_transition_recovery_case(
+            session=session,
+            case_id=case.id,
+            expected_status=case.status,
+            expected_version=case.version,
+            new_status=RecoveryCaseStatus.ANALYSING,
+        )
     except InvalidStateTransition:
         return {
             "status": "ignored",
             "reason": "invalid_state_transition",
+            "recovery_case_id": str(case.id),
+        }
+
+    if rowcount == 0:
+        return {
+            "status": "ignored",
+            "reason": "state_conflict_or_stale_job",
             "recovery_case_id": str(case.id),
         }
 
@@ -86,7 +99,7 @@ def _handle_recovery_case_eligible(session, outbox: OutboxEvent) -> dict:
     return {
         "status": "processed",
         "recovery_case_id": str(case.id),
-        "new_status": case.status.value,
+        "new_status": RecoveryCaseStatus.ANALYSING.value,
     }
 
 
