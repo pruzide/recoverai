@@ -91,6 +91,13 @@ UPDATE recovery_cases
 SET status = 'ANALYSING', version = 2, updated_at = NOW()
 WHERE id = '...' AND status = 'ELIGIBLE' AND version = 1;
 ```
+If rowcount == 1, the worker won the transition and writes an audit log. If rowcount == 0, another worker won or the state changed, and the task is safely ignored. This prevents long-held pessimistic row locks (SELECT ... FOR UPDATE) while strictly preventing duplicate transitions.
+
+### Stale Job Protection
+Workers reload the current state from PostgreSQL before executing logic. If a case has transitioned to a terminal state (e.g., RECOVERED via a late payment.captured webhook) while the task was sitting in the queue, the worker detects the state mismatch and exits without executing stale recovery actions.
+
+### Idempotent Action Creation
+Recovery actions (e.g., CREATE_PAYMENT_LINK) are created using deterministic idempotency_key unique constraints. To handle concurrent insertion races, the application uses SQLAlchemy savepoints (begin_nested()). If a unique constraint violation occurs, the savepoint catches the error and returns the existing action, ensuring the broader business transaction does not abort and duplicate actions are never created.
 
 ## Deterministic Recovery Engine (Milestone 6)
 RecoverAI separates the *decision* of what to do from the *execution* of the action.
