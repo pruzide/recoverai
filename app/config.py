@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai"
-    test_database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai_test"
+    database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5432/recoverai"
+    test_database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5432/recoverai_test"
 
     db_pool_size: int = 5
     db_max_overflow: int = 5
@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     razorpay_key_id: str = ""
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = "local_webhook_secret_change_me"
+
+    llm_enabled: bool = False
+    llm_provider: str = "mock"
+    llm_timeout_seconds: float = 5.0
+    llm_mock_mode: str = "normal"
 
 
 @lru_cache

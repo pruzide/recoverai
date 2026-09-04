@@ -94,7 +94,8 @@ def test_expired_card_payment_link_approved_and_scheduled(db_session):
 
     assert result["status"] == "processed"
     assert result["engine_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
-    assert result["policy_approved"] is True
+    assert result["agent_source"] == "deterministic_fallback"
+    assert result["final_policy_approved"] is True
     assert result["final_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
     assert result["final_status"] == RecoveryCaseStatus.ACTION_SCHEDULED.value
 
@@ -123,8 +124,11 @@ def test_high_value_case_forced_to_escalate(db_session):
 
     result = process_outbox_event.apply(args=[str(outbox.id)]).get()
 
-    assert result["policy_approved"] is False
+    assert result["status"] == "processed"
     assert result["engine_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
+    assert result["deterministic_action"] == RecoveryActionType.ESCALATE.value
+    assert result["agent_source"] == "deterministic_fallback"
+    assert result["final_policy_approved"] is False
     assert result["final_action"] == RecoveryActionType.ESCALATE.value
     assert result["final_status"] == RecoveryCaseStatus.ESCALATED.value
 
@@ -159,7 +163,11 @@ def test_active_payment_link_falls_back_to_wait(db_session):
 
     result = process_outbox_event.apply(args=[str(outbox.id)]).get()
 
-    assert result["policy_approved"] is False
+    assert result["status"] == "processed"
+    assert result["engine_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
+    assert result["deterministic_action"] == RecoveryActionType.WAIT.value
+    assert result["agent_source"] == "deterministic_fallback"
+    assert result["final_policy_approved"] is False
     assert result["final_action"] == RecoveryActionType.WAIT.value
     assert result["final_status"] == RecoveryCaseStatus.ACTION_SCHEDULED.value
 
@@ -206,7 +214,11 @@ def test_max_reminders_reached_falls_back_to_stop(db_session):
 
     result = process_outbox_event.apply(args=[str(outbox.id)]).get()
 
-    assert result["policy_approved"] is False
+    assert result["status"] == "processed"
+    assert result["engine_action"] == RecoveryActionType.SEND_REMINDER.value
+    assert result["deterministic_action"] == RecoveryActionType.STOP.value
+    assert result["agent_source"] == "deterministic_fallback"
+    assert result["final_policy_approved"] is False
     assert result["final_action"] == RecoveryActionType.STOP.value
     assert result["final_status"] == RecoveryCaseStatus.STOPPED.value
 
