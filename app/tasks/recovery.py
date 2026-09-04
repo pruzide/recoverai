@@ -1,5 +1,4 @@
-from datetime import timedelta
-from typing import Optional
+﻿from datetime import timedelta
 from uuid import UUID
 
 import structlog
@@ -8,60 +7,91 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.celery_app import celery_app
 from app.db import get_session_factory
+from app.domain.policy import evaluate_policy
 from app.domain.recovery_engine import evaluate_recovery
-from app.domain.recovery_state import InvalidStateTransition
+from app.domain.recovery_state import InvalidStateTransition, validate_transition
 from app.models import AuditEvent, OutboxEvent, RecoveryCase
-from app.models.enums import RecoveryActionType, RecoveryCaseStatus
+from app.models.enums import (
+    RecoveryActionStatus,
+    RecoveryActionType,
+    RecoveryCaseStatus,
+)
+from app.services.policy_service import (
+    build_policy_input,
+    get_or_create_default_policy,
+    policy_limits_from,
+)
 from app.services.recovery_actions import (
     create_recovery_action_idempotent,
     recovery_action_idempotency_key,
 )
-from app.services.recovery_cases import atomic_transition_recovery_case, utcnow
+from app.services.recovery_cases import (
+    atomic_transition_recovery_case,
+    utcnow,
+)
 from app.tasks.backoff import exponential_backoff_with_jitter
 
 
 logger = structlog.get_logger()
 
 
-class IgnoredTaskError(Exception):
-    def __init__(self, reason: str):
-        self.reason = reason
-        super().__init__(reason)
-
-
-def _insert_task_audit(
+def _insert_decision_audit(
     session,
     case: RecoveryCase,
     outbox_event_id: str,
-    from_status: RecoveryCaseStatus,
-    to_status: RecoveryCaseStatus,
-    decision_reason: Optional[str] = None,
-    action_type: Optional[str] = None,
+    engine_action: RecoveryActionType,
+    final_action: RecoveryActionType,
+    policy_approved: bool,
+    policy_reason: str,
+    final_status: RecoveryCaseStatus,
 ) -> None:
-    payload = {
-        "outbox_event_id": outbox_event_id,
-        "from_status": from_status.value,
-        "to_status": to_status.value,
-    }
-
-    if decision_reason:
-        payload["decision_reason"] = decision_reason
-
-    if action_type:
-        payload["action_type"] = action_type
-
     audit = AuditEvent(
         merchant_id=case.merchant_id,
         entity_type="recovery_case",
         entity_id=str(case.id),
-        event_type="recovery_case.processed",
-        actor="worker",
+        event_type="recovery_case.decision",
+        actor="policy_worker",
         correlation_id=None,
-        payload=payload,
+        payload={
+            "outbox_event_id": outbox_event_id,
+            "engine_action": engine_action.value,
+            "final_action": final_action.value,
+            "policy_approved": policy_approved,
+            "policy_reason": policy_reason,
+            "final_status": final_status.value,
+        },
     )
 
     session.add(audit)
     session.flush()
+
+
+def _atomic_transition_with_next_action_at(
+    session,
+    case_id: UUID,
+    expected_status: RecoveryCaseStatus,
+    expected_version: int,
+    new_status: RecoveryCaseStatus,
+    next_action_at,
+) -> int:
+    validate_transition(expected_status, new_status)
+
+    result = session.execute(
+        update(RecoveryCase)
+        .where(
+            RecoveryCase.id == case_id,
+            RecoveryCase.status == expected_status,
+            RecoveryCase.version == expected_version,
+        )
+        .values(
+            status=new_status,
+            version=expected_version + 1,
+            updated_at=utcnow(),
+            next_action_at=next_action_at,
+        )
+    )
+
+    return max(0, result.rowcount)
 
 
 def _handle_recovery_case_eligible(session, outbox: OutboxEvent) -> dict:
@@ -70,59 +100,75 @@ def _handle_recovery_case_eligible(session, outbox: OutboxEvent) -> dict:
     try:
         case_id = UUID(str(case_id_raw))
     except (ValueError, TypeError):
-        return {
-            "status": "invalid_payload",
-            "reason": "missing_or_invalid_recovery_case_id",
-        }
+        return {"status": "invalid_payload"}
 
     case = session.get(RecoveryCase, case_id)
 
     if case is None:
-        return {
-            "status": "missing_recovery_case",
-            "recovery_case_id": str(case_id_raw),
-        }
+        return {"status": "missing_recovery_case"}
 
     if case.status != RecoveryCaseStatus.ELIGIBLE:
-        raise IgnoredTaskError(
-            f"case_status_is_{case.status.value}"
-        )
+        return {
+            "status": "ignored",
+            "reason": f"case_status_is_{case.status.value}",
+        }
 
     v = case.version
-    final_status = case.status
 
     try:
         rowcount = atomic_transition_recovery_case(
-            session=session,
-            case_id=case.id,
-            expected_status=case.status,
-            expected_version=v,
-            new_status=RecoveryCaseStatus.ANALYSING,
+            session,
+            case.id,
+            case.status,
+            v,
+            RecoveryCaseStatus.ANALYSING,
         )
     except InvalidStateTransition:
-        raise IgnoredTaskError("invalid_state_transition")
+        return {
+            "status": "ignored",
+            "reason": "invalid_state_transition",
+        }
 
     if rowcount == 0:
-        raise IgnoredTaskError("state_conflict_or_stale_job")
+        return {
+            "status": "ignored",
+            "reason": "state_conflict_or_stale_job",
+        }
 
     v += 1
-    final_status = RecoveryCaseStatus.ANALYSING
+    current_status = RecoveryCaseStatus.ANALYSING
 
-    decision = evaluate_recovery(
-        amount_minor=case.amount_minor,
-        failure_category=case.failure_category,
+    engine_decision = evaluate_recovery(
+        case.amount_minor,
+        case.failure_category,
     )
 
-    action_type = decision.action
-    attempt_number = 1
+    policy = get_or_create_default_policy(
+        session,
+        case.merchant_id,
+    )
 
-    scheduled_at = None
-    if action_type == RecoveryActionType.WAIT:
-        scheduled_at = utcnow() + timedelta(hours=decision.delay_hours or 24.0)
+    policy_input = build_policy_input(
+        session=session,
+        case=case,
+        candidate_action=engine_decision.action,
+        current_status=current_status,
+    )
+
+    limits = policy_limits_from(policy)
+
+    policy_decision = evaluate_policy(
+        limits=limits,
+        policy_input=policy_input,
+        candidate_delay_hours=engine_decision.delay_hours,
+    )
+
+    final_action = policy_decision.final_action
+    attempt_number = 1
 
     idempotency_key = recovery_action_idempotency_key(
         case.id,
-        action_type,
+        final_action,
         attempt_number,
     )
 
@@ -130,102 +176,103 @@ def _handle_recovery_case_eligible(session, outbox: OutboxEvent) -> dict:
         session,
         merchant_id=case.merchant_id,
         recovery_case_id=case.id,
-        action_type=action_type,
+        action_type=final_action,
         idempotency_key=idempotency_key,
         attempt_number=attempt_number,
-        scheduled_at=scheduled_at,
+        status=RecoveryActionStatus.APPROVED,
     )
 
     if not created:
-        raise IgnoredTaskError("action_already_exists")
+        return {
+            "status": "ignored",
+            "reason": "action_already_exists",
+        }
 
     rowcount = atomic_transition_recovery_case(
-        session=session,
-        case_id=case.id,
-        expected_status=RecoveryCaseStatus.ANALYSING,
-        expected_version=v,
-        new_status=RecoveryCaseStatus.ACTION_SELECTED,
+        session,
+        case.id,
+        current_status,
+        v,
+        RecoveryCaseStatus.ACTION_SELECTED,
     )
 
     if rowcount == 0:
-        raise IgnoredTaskError("state_conflict_during_selection")
+        return {
+            "status": "ignored",
+            "reason": "state_conflict_during_selection",
+        }
 
     v += 1
-    final_status = RecoveryCaseStatus.ACTION_SELECTED
 
-    if action_type == RecoveryActionType.STOP:
+    if final_action == RecoveryActionType.STOP:
         rowcount = atomic_transition_recovery_case(
-            session=session,
-            case_id=case.id,
-            expected_status=RecoveryCaseStatus.ACTION_SELECTED,
-            expected_version=v,
-            new_status=RecoveryCaseStatus.STOPPED,
+            session,
+            case.id,
+            RecoveryCaseStatus.ACTION_SELECTED,
+            v,
+            RecoveryCaseStatus.STOPPED,
         )
-
-        if rowcount == 0:
-            raise IgnoredTaskError("state_conflict_during_stop")
-
-        v += 1
         final_status = RecoveryCaseStatus.STOPPED
 
-    elif action_type == RecoveryActionType.ESCALATE:
+    elif final_action == RecoveryActionType.ESCALATE:
         rowcount = atomic_transition_recovery_case(
-            session=session,
-            case_id=case.id,
-            expected_status=RecoveryCaseStatus.ACTION_SELECTED,
-            expected_version=v,
-            new_status=RecoveryCaseStatus.ESCALATED,
+            session,
+            case.id,
+            RecoveryCaseStatus.ACTION_SELECTED,
+            v,
+            RecoveryCaseStatus.ESCALATED,
         )
-
-        if rowcount == 0:
-            raise IgnoredTaskError("state_conflict_during_escalation")
-
-        v += 1
         final_status = RecoveryCaseStatus.ESCALATED
 
-    elif action_type == RecoveryActionType.WAIT:
-        rowcount = atomic_transition_recovery_case(
-            session=session,
-            case_id=case.id,
-            expected_status=RecoveryCaseStatus.ACTION_SELECTED,
-            expected_version=v,
-            new_status=RecoveryCaseStatus.ACTION_SCHEDULED,
+    else:
+        if final_action == RecoveryActionType.WAIT:
+            delay_hours = policy_decision.delay_hours
+
+            if delay_hours is None:
+                delay_hours = engine_decision.delay_hours or 24.0
+
+            next_action_at = utcnow() + timedelta(hours=delay_hours)
+        else:
+            next_action_at = utcnow()
+
+        rowcount = _atomic_transition_with_next_action_at(
+            session,
+            case.id,
+            RecoveryCaseStatus.ACTION_SELECTED,
+            v,
+            RecoveryCaseStatus.ACTION_SCHEDULED,
+            next_action_at,
         )
 
-        if rowcount == 0:
-            raise IgnoredTaskError("state_conflict_during_wait_scheduling")
-
-        v += 1
         final_status = RecoveryCaseStatus.ACTION_SCHEDULED
 
-        schedule_result = session.execute(
-            update(RecoveryCase)
-            .where(RecoveryCase.id == case.id)
-            .values(
-                next_action_at=scheduled_at,
-                updated_at=utcnow(),
-            )
-        )
+    if rowcount == 0:
+        return {
+            "status": "ignored",
+            "reason": "state_conflict_during_final_transition",
+        }
 
-        if schedule_result.rowcount == 0:
-            raise IgnoredTaskError("failed_to_schedule_wait")
+    v += 1
 
-    _insert_task_audit(
+    _insert_decision_audit(
         session=session,
         case=case,
         outbox_event_id=str(outbox.id),
-        from_status=RecoveryCaseStatus.ELIGIBLE,
-        to_status=final_status,
-        decision_reason=decision.reason,
-        action_type=action_type.value,
+        engine_action=engine_decision.action,
+        final_action=final_action,
+        policy_approved=policy_decision.approved,
+        policy_reason=policy_decision.reason,
+        final_status=final_status,
     )
 
     return {
         "status": "processed",
         "recovery_case_id": str(case.id),
-        "action": action_type.value,
+        "engine_action": engine_decision.action.value,
+        "final_action": final_action.value,
+        "policy_approved": policy_decision.approved,
+        "policy_reason": policy_decision.reason,
         "final_status": final_status.value,
-        "reason": decision.reason,
     }
 
 
@@ -233,35 +280,24 @@ def _process_outbox_event(outbox_event_id: str) -> dict:
     try:
         outbox_id = UUID(outbox_event_id)
     except ValueError:
-        return {
-            "status": "invalid_outbox_id",
-        }
+        return {"status": "invalid_outbox_id"}
 
     SessionLocal = get_session_factory()
 
     with SessionLocal() as session:
-        try:
-            with session.begin():
-                outbox = session.get(OutboxEvent, outbox_id)
+        with session.begin():
+            outbox = session.get(OutboxEvent, outbox_id)
 
-                if outbox is None:
-                    return {
-                        "status": "missing_outbox_event",
-                    }
+            if outbox is None:
+                return {"status": "missing_outbox_event"}
 
-                if outbox.event_type == "recovery_case.eligible":
-                    return _handle_recovery_case_eligible(session, outbox)
+            if outbox.event_type == "recovery_case.eligible":
+                return _handle_recovery_case_eligible(session, outbox)
 
-                return {
-                    "status": "ignored",
-                    "reason": "unsupported_event_type",
-                    "event_type": outbox.event_type,
-                }
-
-        except IgnoredTaskError as exc:
             return {
                 "status": "ignored",
-                "reason": exc.reason,
+                "reason": "unsupported_event_type",
+                "event_type": outbox.event_type,
             }
 
 

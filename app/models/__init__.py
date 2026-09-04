@@ -1,5 +1,6 @@
-from app.models.base import Base, TimestampMixin
+﻿from app.models.base import Base, TimestampMixin
 from app.models.merchant import Merchant
+from app.models.merchant_policy import MerchantPolicy
 from app.models.payment import Payment
 from app.models.recovery import RecoveryAction, RecoveryCase
 from app.models.audit import AuditEvent
@@ -10,6 +11,7 @@ __all__ = [
     "Base",
     "TimestampMixin",
     "Merchant",
+    "MerchantPolicy",
     "Payment",
     "RecoveryCase",
     "RecoveryAction",

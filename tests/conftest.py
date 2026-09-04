@@ -5,7 +5,6 @@ TEST_DATABASE_URL = os.getenv(
     "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai_test",
 )
 
-# Force tests to use the test database and known webhook secret.
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["RAZORPAY_WEBHOOK_SECRET"] = "test_webhook_secret"
 os.environ["ENVIRONMENT"] = "test"
@@ -16,12 +15,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models.base import Base
 
-# Import all models so Base.metadata knows every table.
 import app.models  # noqa: F401
 
 from app.celery_app import celery_app
 
-# Run Celery tasks eagerly in tests without requiring Redis.
 celery_app.conf.task_always_eager = True
 celery_app.conf.task_eager_propagates = True
 
@@ -72,6 +69,7 @@ def clean_tables(engine):
                     recovery_cases,
                     payments,
                     webhook_events,
+                    merchant_policies,
                     merchants
                 RESTART IDENTITY CASCADE
                 """

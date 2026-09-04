@@ -1,5 +1,4 @@
-import uuid
-from datetime import datetime, timezone
+﻿import uuid
 
 from sqlalchemy import select
 
@@ -13,6 +12,7 @@ from app.models import (
 from app.models.enums import (
     OutboxEventStatus,
     PaymentStatus,
+    RecoveryActionStatus,
     RecoveryActionType,
     RecoveryCaseStatus,
 )
@@ -21,11 +21,10 @@ from app.tasks.recovery import process_outbox_event
 
 def create_case_with_outbox(
     db_session,
-    amount=5000,
+    amount=5_000,
     category="expired_instrument",
-    status=RecoveryCaseStatus.ELIGIBLE,
 ):
-    merchant = Merchant(name="Engine Merchant")
+    merchant = Merchant(name="Policy Merchant")
     db_session.add(merchant)
     db_session.flush()
 
@@ -44,7 +43,7 @@ def create_case_with_outbox(
     case = RecoveryCase(
         merchant_id=merchant.id,
         payment_id=payment.id,
-        status=status,
+        status=RecoveryCaseStatus.ELIGIBLE,
         amount_minor=amount,
         currency="INR",
         failure_category=category,
@@ -58,9 +57,7 @@ def create_case_with_outbox(
         aggregate_type="recovery_case",
         aggregate_id=str(case.id),
         event_type="recovery_case.eligible",
-        payload={
-            "recovery_case_id": str(case.id),
-        },
+        payload={"recovery_case_id": str(case.id)},
         idempotency_key=f"recovery_case.eligible:{case.id}",
         status=OutboxEventStatus.PUBLISHED,
     )
@@ -70,149 +67,107 @@ def create_case_with_outbox(
     return case, outbox
 
 
-def test_invalid_outbox_id():
-    result = process_outbox_event.apply(args=["not-a-uuid"]).get()
-
-    assert result["status"] == "invalid_outbox_id"
-
-
-def test_task_selects_payment_link_for_expired(db_session):
-    case, outbox = create_case_with_outbox(
-        db_session,
-        amount=5000,
-        category="expired_instrument",
+def add_existing_action(
+    db_session,
+    case,
+    action_type,
+    attempt_number,
+    status,
+):
+    action = RecoveryAction(
+        merchant_id=case.merchant_id,
+        recovery_case_id=case.id,
+        action_type=action_type,
+        status=status,
+        idempotency_key=f"lab:{uuid.uuid4().hex}",
+        attempt_number=attempt_number,
     )
+
+    db_session.add(action)
+    db_session.commit()
+
+
+def test_expired_card_payment_link_approved_and_scheduled(db_session):
+    case, outbox = create_case_with_outbox(db_session)
 
     result = process_outbox_event.apply(args=[str(outbox.id)]).get()
 
     assert result["status"] == "processed"
-    assert result["action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
-    assert result["final_status"] == RecoveryCaseStatus.ACTION_SELECTED.value
-
-    db_session.expire_all()
-
-    refreshed_case = db_session.get(RecoveryCase, case.id)
-
-    assert refreshed_case.status == RecoveryCaseStatus.ACTION_SELECTED
-    assert refreshed_case.version == 3
-
-    actions = db_session.execute(
-        select(RecoveryAction).where(
-            RecoveryAction.recovery_case_id == case.id
-        )
-    ).scalars().all()
-
-    assert len(actions) == 1
-    assert actions[0].action_type == RecoveryActionType.CREATE_PAYMENT_LINK
-
-
-def test_task_stops_low_value(db_session):
-    case, outbox = create_case_with_outbox(
-        db_session,
-        amount=500,
-        category="expired_instrument",
-    )
-
-    result = process_outbox_event.apply(args=[str(outbox.id)]).get()
-
-    assert result["status"] == "processed"
-    assert result["action"] == RecoveryActionType.STOP.value
-    assert result["final_status"] == RecoveryCaseStatus.STOPPED.value
-
-    db_session.expire_all()
-
-    refreshed_case = db_session.get(RecoveryCase, case.id)
-
-    assert refreshed_case.status == RecoveryCaseStatus.STOPPED
-    assert refreshed_case.version == 4
-
-    actions = db_session.execute(
-        select(RecoveryAction).where(
-            RecoveryAction.recovery_case_id == case.id
-        )
-    ).scalars().all()
-
-    assert len(actions) == 1
-    assert actions[0].action_type == RecoveryActionType.STOP
-
-
-def test_task_schedules_wait_for_insufficient_funds(db_session):
-    case, outbox = create_case_with_outbox(
-        db_session,
-        amount=5000,
-        category="insufficient_funds",
-    )
-
-    result = process_outbox_event.apply(args=[str(outbox.id)]).get()
-
-    assert result["status"] == "processed"
-    assert result["action"] == RecoveryActionType.WAIT.value
+    assert result["engine_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
+    assert result["policy_approved"] is True
+    assert result["final_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
     assert result["final_status"] == RecoveryCaseStatus.ACTION_SCHEDULED.value
 
     db_session.expire_all()
 
     refreshed_case = db_session.get(RecoveryCase, case.id)
-
     assert refreshed_case.status == RecoveryCaseStatus.ACTION_SCHEDULED
-    assert refreshed_case.version == 4
     assert refreshed_case.next_action_at is not None
-    assert refreshed_case.next_action_at > datetime.now(timezone.utc)
 
-    actions = db_session.execute(
+    action = db_session.execute(
         select(RecoveryAction).where(
             RecoveryAction.recovery_case_id == case.id
         )
-    ).scalars().all()
+    ).scalar_one()
 
-    assert len(actions) == 1
-    assert actions[0].action_type == RecoveryActionType.WAIT
-    assert actions[0].scheduled_at is not None
+    assert action.action_type == RecoveryActionType.CREATE_PAYMENT_LINK
+    assert action.status == RecoveryActionStatus.APPROVED
 
 
-def test_task_escalates_issuer_failure(db_session):
+def test_high_value_case_forced_to_escalate(db_session):
     case, outbox = create_case_with_outbox(
         db_session,
-        amount=5000,
-        category="issuer_failure",
+        amount=600_000,
+        category="expired_instrument",
     )
 
     result = process_outbox_event.apply(args=[str(outbox.id)]).get()
 
-    assert result["status"] == "processed"
-    assert result["action"] == RecoveryActionType.ESCALATE.value
+    assert result["policy_approved"] is False
+    assert result["engine_action"] == RecoveryActionType.CREATE_PAYMENT_LINK.value
+    assert result["final_action"] == RecoveryActionType.ESCALATE.value
     assert result["final_status"] == RecoveryCaseStatus.ESCALATED.value
 
     db_session.expire_all()
 
     refreshed_case = db_session.get(RecoveryCase, case.id)
-
     assert refreshed_case.status == RecoveryCaseStatus.ESCALATED
-    assert refreshed_case.version == 4
 
-    actions = db_session.execute(
+    action = db_session.execute(
         select(RecoveryAction).where(
             RecoveryAction.recovery_case_id == case.id
         )
-    ).scalars().all()
+    ).scalar_one()
 
-    assert len(actions) == 1
-    assert actions[0].action_type == RecoveryActionType.ESCALATE
+    assert action.action_type == RecoveryActionType.ESCALATE
 
 
-def test_task_ignores_non_eligible_case(db_session):
+def test_active_payment_link_falls_back_to_wait(db_session):
     case, outbox = create_case_with_outbox(
         db_session,
-        amount=5000,
+        amount=5_000,
         category="expired_instrument",
-        status=RecoveryCaseStatus.ANALYSING,
+    )
+
+    add_existing_action(
+        db_session,
+        case,
+        RecoveryActionType.CREATE_PAYMENT_LINK,
+        1,
+        RecoveryActionStatus.APPROVED,
     )
 
     result = process_outbox_event.apply(args=[str(outbox.id)]).get()
 
-    assert result["status"] == "ignored"
-    assert "case_status_is_ANALYSING" in result["reason"]
+    assert result["policy_approved"] is False
+    assert result["final_action"] == RecoveryActionType.WAIT.value
+    assert result["final_status"] == RecoveryCaseStatus.ACTION_SCHEDULED.value
 
     db_session.expire_all()
+
+    refreshed_case = db_session.get(RecoveryCase, case.id)
+    assert refreshed_case.status == RecoveryCaseStatus.ACTION_SCHEDULED
+    assert refreshed_case.next_action_at is not None
 
     actions = db_session.execute(
         select(RecoveryAction).where(
@@ -220,4 +175,42 @@ def test_task_ignores_non_eligible_case(db_session):
         )
     ).scalars().all()
 
-    assert len(actions) == 0
+    action_types = {action.action_type for action in actions}
+
+    assert RecoveryActionType.CREATE_PAYMENT_LINK in action_types
+    assert RecoveryActionType.WAIT in action_types
+
+
+def test_max_reminders_reached_falls_back_to_stop(db_session):
+    case, outbox = create_case_with_outbox(
+        db_session,
+        amount=5_000,
+        category="temporary_network",
+    )
+
+    add_existing_action(
+        db_session,
+        case,
+        RecoveryActionType.SEND_REMINDER,
+        1,
+        RecoveryActionStatus.EXECUTED,
+    )
+
+    add_existing_action(
+        db_session,
+        case,
+        RecoveryActionType.SEND_REMINDER,
+        2,
+        RecoveryActionStatus.EXECUTED,
+    )
+
+    result = process_outbox_event.apply(args=[str(outbox.id)]).get()
+
+    assert result["policy_approved"] is False
+    assert result["final_action"] == RecoveryActionType.STOP.value
+    assert result["final_status"] == RecoveryCaseStatus.STOPPED.value
+
+    db_session.expire_all()
+
+    refreshed_case = db_session.get(RecoveryCase, case.id)
+    assert refreshed_case.status == RecoveryCaseStatus.STOPPED

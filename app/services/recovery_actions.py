@@ -29,18 +29,9 @@ def create_recovery_action_idempotent(
     action_type: RecoveryActionType,
     idempotency_key: str,
     attempt_number: int = 1,
+    status: RecoveryActionStatus = RecoveryActionStatus.PENDING,
     scheduled_at: Optional[datetime] = None,
 ) -> Tuple[RecoveryAction, bool]:
-    """
-    Create a recovery action idempotently.
-
-    Returns:
-        action, created
-
-        created=True  -> this call inserted the action
-        created=False -> an equivalent action already existed
-    """
-
     existing = session.execute(
         select(RecoveryAction).where(
             RecoveryAction.idempotency_key == idempotency_key
@@ -56,7 +47,7 @@ def create_recovery_action_idempotent(
                 merchant_id=merchant_id,
                 recovery_case_id=recovery_case_id,
                 action_type=action_type,
-                status=RecoveryActionStatus.PENDING,
+                status=status,
                 idempotency_key=idempotency_key,
                 attempt_number=attempt_number,
                 scheduled_at=scheduled_at,
