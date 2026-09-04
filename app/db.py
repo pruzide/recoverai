@@ -1,7 +1,9 @@
+from functools import lru_cache
 from typing import Optional
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 
@@ -27,6 +29,15 @@ def get_engine() -> Engine:
         )
 
     return _engine
+
+
+@lru_cache
+def get_session_factory():
+    return sessionmaker(
+        bind=get_engine(),
+        expire_on_commit=False,
+        autoflush=False,
+    )
 
 
 def check_database() -> bool:

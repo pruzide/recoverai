@@ -1,4 +1,4 @@
-﻿from enum import Enum
+from enum import Enum
 
 
 class PaymentStatus(str, Enum):
@@ -35,3 +35,16 @@ class RecoveryActionStatus(str, Enum):
     EXECUTED = "EXECUTED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+
+
+class WebhookEventStatus(str, Enum):
+    RECEIVED = "RECEIVED"
+    PROCESSED = "PROCESSED"
+    IGNORED = "IGNORED"
+    FAILED = "FAILED"
+
+
+class OutboxEventStatus(str, Enum):
+    PENDING = "PENDING"
+    PUBLISHED = "PUBLISHED"
+    FAILED = "FAILED"

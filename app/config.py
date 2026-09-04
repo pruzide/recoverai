@@ -20,7 +20,8 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
-    database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai"
+    database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5432/recoverai"
+    test_database_url: str = "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5432/recoverai_test"
 
     db_pool_size: int = 5
     db_max_overflow: int = 5
@@ -29,6 +30,10 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
     redis_socket_timeout: int = 2
+
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = "local_webhook_secret_change_me"
 
 
 @lru_cache

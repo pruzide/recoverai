@@ -1,18 +1,23 @@
 import os
 
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai_test",
+)
+
+# Force tests to use the test database and known webhook secret.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["RAZORPAY_WEBHOOK_SECRET"] = "test_webhook_secret"
+os.environ["ENVIRONMENT"] = "test"
+
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.models.base import Base
 
+# Import all models so Base.metadata knows every table.
 import app.models  # noqa: F401
-
-
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+psycopg://postgres:recoverai_local_dev@localhost:5433/recoverai_test",
-)
 
 
 @pytest.fixture(scope="session")
@@ -55,10 +60,12 @@ def clean_tables(engine):
             text(
                 """
                 TRUNCATE TABLE
+                    outbox_events,
                     audit_events,
                     recovery_actions,
                     recovery_cases,
                     payments,
+                    webhook_events,
                     merchants
                 RESTART IDENTITY CASCADE
                 """
