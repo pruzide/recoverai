@@ -1,7 +1,7 @@
 # RecoverAI System Design
 
 ## Status
-Milestone 5 Complete. Core Data Model, Webhook Ingestion, Transactional Outbox, Async Worker Processing, and Concurrency Safety established.
+Milestone 7 Complete. Core Data Model, Webhook Ingestion, Transactional Outbox, Async Worker Processing, Concurrency Safety, Deterministic Recovery Engine, and Policy Engine established.
 
 ## Goal
 RecoverAI detects failed payments and safely coordinates bounded recovery interventions.
@@ -90,3 +90,69 @@ Worker state transitions use version-guarded atomic updates:
 UPDATE recovery_cases
 SET status = 'ANALYSING', version = 2, updated_at = NOW()
 WHERE id = '...' AND status = 'ELIGIBLE' AND version = 1;
+```
+
+## Deterministic Recovery Engine (Milestone 6)
+RecoverAI separates the *decision* of what to do from the *execution* of the action.
+
+### Strategy Evaluation
+Recovery decisions are made by a pure, deterministic domain function: `evaluate_recovery`.
+This function takes `amount_minor` and `failure_category` and returns a `RecoveryDecision` containing the `action`, `reason`, and optional `delay`.
+
+Because it is a pure function, it:
+- Contains no database or network calls.
+- Is trivially unit-testable.
+- Can evaluate millions of scenarios per second for business simulations.
+
+### State Chaining
+The worker chains state transitions atomically using optimistic concurrency:
+1. `ELIGIBLE` -> `ANALYSING`
+2. Evaluate decision
+3. Create `RecoveryAction` idempotently
+4. `ANALYSING` -> `ACTION_SELECTED`
+5. `ACTION_SELECTED` -> `STOPPED` / `ESCALATED` / `ACTION_SCHEDULED` (if applicable)
+
+### Execution Separation
+Milestone 6 only selects the action and schedules it. Actual execution (calling external APIs like Razorpay or sending emails) is deferred to later milestones. This protects the decision engine from network failures and external API rate limits.
+
+## Policy Engine (Milestone 7)
+The policy engine acts as a deterministic safety layer between the recovery engine's recommendations and the system's actual execution.
+
+### Purpose
+The policy engine determines whether a candidate recovery action is permitted. It protects against:
+- Excessive customer contact (spam).
+- Duplicate active payment links.
+- Automatic action on high-value cases without human review.
+- Actions on terminal recovery cases.
+
+### Policy Rules
+Current deterministic policies enforced:
+- `MAX_ACTIONS_PER_CASE`
+- `MAX_REMINDERS_PER_CASE`
+- `ONE_ACTIVE_PAYMENT_LINK`
+- `HIGH_VALUE_ESCALATION_THRESHOLD`
+- `TERMINAL_STATE_PROTECTION`
+
+### Evaluation Model
+The policy engine is pure and deterministic.
+Inputs:
+- Case status and amount.
+- Candidate action from the recovery engine.
+- Contextual counts (total actions, reminders, active links).
+- Merchant-specific limits.
+
+Output:
+- `approved` (boolean)
+- `final_action` (the permitted action or safe fallback)
+- `reason` (audit trail)
+
+### Fallback Behavior
+If a candidate action is denied, the policy engine returns a safe fallback:
+- High value -> `ESCALATE`
+- Max actions reached -> `STOP`
+- Max reminders reached -> `STOP`
+- Active payment link exists -> `WAIT`
+- Terminal state -> `STOP`
+
+### Merchant Policies
+Merchant policies are stored in the `merchant_policies` table. Each merchant has exactly one policy row, allowing different merchants to configure their own risk tolerances and customer contact limits. Default policies are created automatically when a recovery case is first processed.

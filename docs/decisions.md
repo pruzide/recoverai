@@ -373,3 +373,88 @@ Duplicate payment links or duplicate reminders sent to the customer.
 
 When reconsider:
 Do not reconsider. Idempotency is non-negotiable for financial actions.
+
+## D-023: Separate decision from execution
+
+Decision:
+Separate the recovery strategy decision from the actual external execution.
+
+Reason:
+Deciding to send a reminder or create a payment link is a business logic step. Actually calling an external API is an infrastructure step. Mixing them makes the system fragile to network timeouts.
+
+Tradeoff:
+Requires more state transitions (e.g., `ACTION_SELECTED` -> `EXECUTING`).
+
+Failure mode avoided:
+Network timeouts or external API outages corrupting the internal decision state or blocking the worker.
+
+When reconsider:
+Do not reconsider. Decision and execution must remain decoupled.
+
+## D-024: Pure function for strategy evaluation
+
+Decision:
+Implement the deterministic recovery engine as a pure Python function that takes context and returns a decision, without accessing the database or network.
+
+Reason:
+Business rules must be trivially testable, extremely fast, and immune to infrastructure outages.
+
+Tradeoff:
+Requires the worker to load all necessary context before calling the function.
+
+Failure mode avoided:
+Untestable logic, slow simulations, and cascading failures when the database is under load.
+
+When reconsider:
+Do not reconsider. Domain logic should remain pure.
+
+## D-025: Deterministic policy engine
+
+Decision:
+Policy checks are deterministic and separate from the recovery engine and the future agentic AI.
+
+Reason:
+Safety rules (like max reminders or high-value escalation) must be predictable, auditable, and strictly enforced.
+
+Tradeoff:
+Less flexibility than probabilistic decision-making.
+
+Failure mode avoided:
+An LLM or heuristic hallucinating an exception to a hard financial or customer-experience limit.
+
+When reconsider:
+Do not reconsider deterministic policy ownership. AI may suggest actions, but policy owns permission.
+
+## D-026: Policy returns safe fallback action
+
+Decision:
+When a candidate action is denied by policy, the engine returns a final safe fallback action (e.g., `STOP`, `WAIT`, `ESCALATE`) rather than just returning `False`.
+
+Reason:
+The system must not leave cases stuck in an intermediate state after a policy denial.
+
+Tradeoff:
+Fallback logic adds complexity to the state machine transitions.
+
+Failure mode avoided:
+Denied cases remaining forever in `ANALYSING` or `ACTION_SELECTED` without resolution.
+
+When reconsider:
+If product requirements prefer explicit human review queues for every single denial instead of automated fallbacks.
+
+## D-027: Merchant-specific policy table
+
+Decision:
+Store merchant policy limits in a dedicated `merchant_policies` table rather than using global hardcoded constants.
+
+Reason:
+Different merchants have different risk tolerances, customer bases, and operational capacities.
+
+Tradeoff:
+Requires an additional database table, migration, and context-loading query.
+
+Failure mode avoided:
+Global policy settings harming merchant-specific customer experience or ignoring merchant-specific risk profiles.
+
+When reconsider:
+Do not reconsider multi-tenant policy support.
