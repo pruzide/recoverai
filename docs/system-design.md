@@ -1,7 +1,7 @@
 # RecoverAI System Design
 
 ## Status
-Milestone 4 Complete. Core Data Model, Webhook Ingestion, Transactional Outbox, and Async Worker Processing established.
+Milestone 5 Complete. Core Data Model, Webhook Ingestion, Transactional Outbox, Async Worker Processing, and Concurrency Safety established.
 
 ## Goal
 RecoverAI detects failed payments and safely coordinates bounded recovery interventions.
@@ -16,6 +16,7 @@ DETECT → UNDERSTAND → DECIDE → POLICY CHECK → ACT → OBSERVE → MEASUR
 4. Important business state must survive restarts.
 5. Financial correctness must not depend on LLM availability.
 6. Webhook processing must be lightweight and fast.
+7. Delivery may occur more than once, but business side effects must occur effectively once.
 
 ## Data Model (Milestone 2 & 3)
 ### Core Tables
@@ -80,9 +81,12 @@ RecoverAI decouples webhook ingestion from heavy recovery processing using an as
 - **Bounded Retries**: Transient failures (e.g., DB connection blips) trigger retries with exponential backoff and jitter to prevent thundering herds.
 - **Backpressure**: If workers process slower than webhooks arrive, the Redis queue safely absorbs the burst while the API remains responsive.
 
-## Infrastructure
-- FastAPI (Stateless API)
-- PostgreSQL 16 (Source of Truth, Port 5433 locally to avoid host conflicts)
-- Redis 7 (Ephemeral Queue Broker / Cache)
-- Celery (Distributed Task Queue / Workers)
-- Alembic (Schema Migrations)
+## Concurrency & Idempotency (Milestone 5)
+RecoverAI assumes duplicate webhook delivery, duplicate queue delivery, concurrent workers, and stale tasks. The system separates delivery from side effects to guarantee effectively-once business behavior.
+
+### Optimistic Concurrency Control
+Worker state transitions use version-guarded atomic updates:
+```sql
+UPDATE recovery_cases
+SET status = 'ANALYSING', version = 2, updated_at = NOW()
+WHERE id = '...' AND status = 'ELIGIBLE' AND version = 1;

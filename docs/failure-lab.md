@@ -67,3 +67,28 @@ The queue broker (Redis) is merely a transport mechanism. PostgreSQL owns the du
 
 Correct future design:
 Always write work intent to the transactional outbox before attempting to publish to the message broker.
+
+## Lab 4: Concurrent Worker State Transitions (Optimistic Concurrency)
+
+Goal:
+Prove that optimistic concurrency control prevents duplicate state transitions and duplicate audit events when multiple workers race to process the same recovery case.
+
+Experiment:
+Run `python labs/concurrent_case_transition_lab.py`.
+1. Create a recovery case in the `ELIGIBLE` state with `version = 1`.
+2. Spawn two Python threads simulating two concurrent Celery workers.
+3. Use a `threading.Barrier` to force both threads to read the case state and attempt the atomic `UPDATE ... WHERE version = 1` at the exact same millisecond.
+4. Observe the database state and audit logs after both threads finish.
+
+Expected result:
+- `Successful transitions: 1`
+- `Conflicted transitions: 1`
+- `Final case status: ANALYSING`
+- `Final case version: 2`
+- `Audit events: 1`
+
+Lesson:
+Queue delivery and worker execution can happen concurrently. Relying on application-level `if status == 'ELIGIBLE'` checks is unsafe because both workers will read `ELIGIBLE`. The database-level `WHERE version = expected_version` constraint is the only safe way to ensure exactly one worker wins the right to mutate state and write audit logs.
+
+Correct future design:
+Always use atomic, version-guarded updates for critical state machine transitions in distributed workers.

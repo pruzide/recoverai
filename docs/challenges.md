@@ -220,3 +220,32 @@ The `solo` pool cannot process tasks concurrently. It is strictly for local deve
 ### What we learned
 1. Celery on Windows is a local development convenience, not a production pattern.
 2. Production workers must run in Linux containers where the default `prefork` pool (or `gevent`/`eventlet`) can properly manage concurrency and process isolation.
+
+---
+
+## C-009: SQLAlchemy `SAWarning` on DELETE during concurrent lab cleanup
+
+### Problem
+The `concurrent_case_transition_lab.py` script passed successfully but emitted `SAWarning: DELETE statement on table 'payments' expected to delete 1 row(s); 0 were matched` during the cleanup phase.
+
+### Symptoms
+The lab logic worked perfectly (1 success, 1 conflict, 1 audit event), but the terminal output was cluttered with SQLAlchemy warnings when deleting the merchant, payment, and recovery case records.
+
+### Root cause
+In Milestone 2, we configured foreign keys with `ondelete="CASCADE"`. When the lab script deleted the parent `Merchant` or `Payment`, PostgreSQL automatically cascaded the delete and removed the child `RecoveryCase` rows at the database level. A millisecond later, SQLAlchemy's session tried to explicitly delete those child rows from its memory, realized they were already gone in the DB, and threw a warning.
+
+### Investigation
+Traced the warning to the `cleanup()` function in the lab script. Verified that the database schema indeed contained `ON DELETE CASCADE` constraints.
+
+### Fix
+Recognized this as a harmless ORM-to-DB synchronization warning specific to the manual lab cleanup script, not a production bug. In production, records are rarely hard-deleted; they are state-transitioned to terminal states. No code change was strictly required for production, but understanding the difference between ORM-level and DB-level cascades was the key takeaway.
+
+### Why the fix worked
+Understanding that PostgreSQL had already correctly enforced referential integrity prevented unnecessary debugging of the application code.
+
+### Tradeoff
+ORMs can sometimes obscure what the underlying database engine is actually doing.
+
+### What we learned
+1. Database-level `ON DELETE CASCADE` happens independently of the ORM's session tracking.
+2. In financial systems, we rarely hard-delete records anyway; we transition them to terminal states (e.g., `STOPPED`, `RECOVERED`) and archive them. Hard deletes are mostly for local test/lab cleanup.

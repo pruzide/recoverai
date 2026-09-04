@@ -322,3 +322,54 @@ Retry storms that permanently take down downstream services like PostgreSQL or e
 
 When reconsider:
 Tune the base delay, cap, and max retries based on production observability metrics.
+
+## D-020: Use optimistic concurrency for recovery case transitions
+
+Decision:
+Use version-guarded `UPDATE` statements (`WHERE version = expected_version`) for worker state transitions instead of pessimistic row locking (`SELECT ... FOR UPDATE`).
+
+Reason:
+State transitions are short and conflicts are relatively rare. Optimistic concurrency prevents duplicate transitions without holding long database locks that could block other workers.
+
+Tradeoff:
+Conflicting workers may perform discarded work (read state, attempt update, realize version changed, exit).
+
+Failure mode avoided:
+Duplicate state transitions, duplicate audit events, and duplicate customer actions caused by concurrent workers or queue redelivery.
+
+When reconsider:
+If a future workflow requires a complex, long-running read-modify-write transaction across multiple tables, pessimistic row locking may be preferable.
+
+## D-021: Audit only after successful atomic transition
+
+Decision:
+Write `audit_events` records only *after* the guarded `UPDATE` statement succeeds (rowcount == 1).
+
+Reason:
+The audit trail must represent committed business truth. If a worker loses an optimistic concurrency race, it must not write an audit log claiming it changed the state.
+
+Tradeoff:
+Requires strict ordering discipline in the worker task logic.
+
+Failure mode avoided:
+Audit logs claiming transitions happened when they actually failed due to concurrency conflicts.
+
+When reconsider:
+Do not reconsider.
+
+## D-022: Use idempotency keys and savepoints for recovery action creation
+
+Decision:
+Create recovery actions using deterministic unique `idempotency_key` constraints, wrapped in SQLAlchemy `begin_nested()` savepoints to handle race conditions.
+
+Reason:
+At-least-once queue delivery means two workers might try to create the exact same recovery action simultaneously. The unique constraint prevents duplicates, and the savepoint allows the transaction to catch the `IntegrityError` and return the existing action without aborting the entire business transaction.
+
+Tradeoff:
+Slightly more complex database insertion logic.
+
+Failure mode avoided:
+Duplicate payment links or duplicate reminders sent to the customer.
+
+When reconsider:
+Do not reconsider. Idempotency is non-negotiable for financial actions.
