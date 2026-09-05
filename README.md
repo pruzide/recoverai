@@ -4,10 +4,6 @@ A distributed, fault-tolerant **revenue recovery engine** for failed payment tra
 
 RecoverAI replaces naive retry loops with a **context-aware, policy-guarded architecture**. It is designed for financial correctness, guaranteeing **effectively-once execution**, preventing stale side effects, and ensuring that AI-driven decisions never bypass deterministic business guardrails.
 
----
-
-## Core Engineering Philosophy
-
 Financial correctness cannot depend on probabilistic models.
 
 In RecoverAI, the **Agentic AI is strictly a strategy selector**. It suggests interventions; deterministic software and policy guardrails own execution, state transitions, and financial invariants.
