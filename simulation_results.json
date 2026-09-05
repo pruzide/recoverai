@@ -1,0 +1,33 @@
+{
+  "baseline": {
+    "total_cases": 10000,
+    "recovered_cases": 2206,
+    "recovery_rate": 0.2206,
+    "total_amount_at_risk_minor": 14343118046,
+    "recovered_amount_minor": 3208849569,
+    "total_contacts": 10000,
+    "avg_time_to_recovery_hours": 1.0,
+    "action_counts": {
+      "SEND_REMINDER": 10000
+    }
+  },
+  "recoverai": {
+    "total_cases": 10000,
+    "recovered_cases": 3870,
+    "recovery_rate": 0.387,
+    "total_amount_at_risk_minor": 14343118046,
+    "recovered_amount_minor": 5852864926,
+    "total_contacts": 4205,
+    "avg_time_to_recovery_hours": 20.248837209302327,
+    "action_counts": {
+      "CREATE_PAYMENT_LINK": 2308,
+      "WAIT": 2764,
+      "ESCALATE": 2051,
+      "SEND_REMINDER": 1897,
+      "STOP": 980
+    }
+  },
+  "incremental_recovered_revenue_minor": 2644015357,
+  "population_size": 10000,
+  "seed": 42
+}

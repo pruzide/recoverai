@@ -2,13 +2,18 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.models.enums import (
     RecoveryActionStatus,
     RecoveryActionType,
     RecoveryCaseStatus,
 )
+
+
+class MerchantSummary(BaseModel):
+    id: UUID
+    name: str
 
 
 class MetricSummary(BaseModel):
@@ -20,6 +25,8 @@ class MetricSummary(BaseModel):
     total_amount_at_risk_minor: int
     recovered_amount_minor: int
     recovery_rate_percent: float
+    total_actions: int
+    avg_time_to_recovery_hours: float
 
 
 class CaseSummary(BaseModel):

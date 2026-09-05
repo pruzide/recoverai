@@ -1,11 +1,21 @@
-from typing import Tuple
+from typing import Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import AuditEvent, RecoveryAction, RecoveryCase
+from app.models import AuditEvent, Merchant, RecoveryAction, RecoveryCase
 from app.models.enums import RecoveryCaseStatus
+
+
+def list_merchants(session: Session, limit: int = 50) -> list[Merchant]:
+    stmt = (
+        select(Merchant)
+        .where(Merchant.is_active == True)  # noqa: E712
+        .order_by(Merchant.created_at.asc())
+        .limit(limit)
+    )
+    return list(session.execute(stmt).scalars().all())
 
 
 def get_merchant_metrics(session: Session, merchant_id: UUID) -> dict:
@@ -32,10 +42,7 @@ def get_merchant_metrics(session: Session, merchant_id: UUID) -> dict:
         func.sum(RecoveryCase.amount_minor).label("total_amount_at_risk_minor"),
         func.sum(
             case(
-                (
-                    RecoveryCase.status == RecoveryCaseStatus.RECOVERED.value,
-                    RecoveryCase.amount_minor,
-                ),
+                (RecoveryCase.status == RecoveryCaseStatus.RECOVERED.value, RecoveryCase.amount_minor),
                 else_=0,
             )
         ).label("recovered_amount_minor"),
@@ -50,6 +57,27 @@ def get_merchant_metrics(session: Session, merchant_id: UUID) -> dict:
 
     recovery_rate = (recovered_cases / total_cases * 100.0) if total_cases > 0 else 0.0
 
+    actions_stmt = (
+        select(func.count())
+        .select_from(RecoveryAction)
+        .where(RecoveryAction.merchant_id == merchant_id)
+    )
+    total_actions = session.execute(actions_stmt).scalar_one()
+
+    time_stmt = (
+        select(
+            func.avg(
+                func.extract("epoch", RecoveryCase.updated_at - RecoveryCase.created_at)
+            )
+        )
+        .where(
+            RecoveryCase.merchant_id == merchant_id,
+            RecoveryCase.status == RecoveryCaseStatus.RECOVERED.value,
+        )
+    )
+    avg_seconds = session.execute(time_stmt).scalar_one_or_none()
+    avg_hours = round(float(avg_seconds) / 3600.0, 1) if avg_seconds is not None else 0.0
+
     return {
         "total_cases": total_cases,
         "recovered_cases": recovered_cases,
@@ -58,6 +86,8 @@ def get_merchant_metrics(session: Session, merchant_id: UUID) -> dict:
         "total_amount_at_risk_minor": total_at_risk,
         "recovered_amount_minor": recovered_amount,
         "recovery_rate_percent": round(recovery_rate, 2),
+        "total_actions": total_actions,
+        "avg_time_to_recovery_hours": avg_hours,
     }
 
 
@@ -66,7 +96,7 @@ def get_paginated_cases(
     merchant_id: UUID,
     limit: int,
     offset: int,
-    status_filter: RecoveryCaseStatus | None = None,
+    status_filter: Optional[RecoveryCaseStatus] = None,
 ) -> Tuple[list[RecoveryCase], int]:
     base_query = select(RecoveryCase).where(RecoveryCase.merchant_id == merchant_id)
 
@@ -82,7 +112,7 @@ def get_paginated_cases(
         .limit(limit)
     )
 
-    cases = session.execute(data_stmt).scalars().all()
+    cases = list(session.execute(data_stmt).scalars().all())
 
     return cases, total_count
 
@@ -91,7 +121,7 @@ def get_case_explainability(
     session: Session,
     case_id: UUID,
     merchant_id: UUID,
-) -> Tuple[RecoveryCase | None, list[RecoveryAction], list[AuditEvent]]:
+) -> Tuple[Optional[RecoveryCase], list[RecoveryAction], list[AuditEvent]]:
     case_obj = session.execute(
         select(RecoveryCase).where(
             RecoveryCase.id == case_id,
@@ -102,19 +132,23 @@ def get_case_explainability(
     if not case_obj:
         return None, [], []
 
-    actions = session.execute(
-        select(RecoveryAction)
-        .where(RecoveryAction.recovery_case_id == case_id)
-        .order_by(RecoveryAction.created_at.asc())
-    ).scalars().all()
+    actions = list(
+        session.execute(
+            select(RecoveryAction)
+            .where(RecoveryAction.recovery_case_id == case_id)
+            .order_by(RecoveryAction.created_at.asc())
+        ).scalars().all()
+    )
 
-    audits = session.execute(
-        select(AuditEvent)
-        .where(
-            AuditEvent.entity_type == "recovery_case",
-            AuditEvent.entity_id == str(case_id),
-        )
-        .order_by(AuditEvent.created_at.asc())
-    ).scalars().all()
+    audits = list(
+        session.execute(
+            select(AuditEvent)
+            .where(
+                AuditEvent.entity_type == "recovery_case",
+                AuditEvent.entity_id == str(case_id),
+            )
+            .order_by(AuditEvent.created_at.asc())
+        ).scalars().all()
+    )
 
     return case_obj, actions, audits

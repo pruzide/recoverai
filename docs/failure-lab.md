@@ -221,3 +221,35 @@ Application memory is a strictly bounded resource. Pushing mathematical aggregat
 
 Correct future design:
 Never use `session.query(Model).all()` for metrics or dashboards. Always use SQL aggregation functions and strict `LIMIT`/`OFFSET` pagination.
+
+## Lab 11: Dashboard graceful degradation when the backend is down
+
+Goal:
+Prove the read layer fails gracefully and recovers without state corruption.
+
+Experiment:
+1. With the full stack running, stop FastAPI (Ctrl+C in its window).
+2. Reload each dashboard page. Observe a clear error banner ("Failed to reach backend"), no crash, no fake or cached data.
+3. Restart FastAPI and press Rerun. Observe data loading normally.
+
+Expected result:
+The dashboard degrades to an informative error and recovers fully when the backend returns.
+
+Lesson:
+A professional read layer must handle dependency absence explicitly. Judges should see designed failure behavior, not stack traces.
+
+## Lab 12: Interpreter drift (system Python vs venv)
+
+Goal:
+Prove why launcher scripts must pin the interpreter.
+
+Experiment:
+1. Open a new PowerShell without venv activation and run `pip show httpx` — observe the system Python lacks project dependencies.
+2. If a global Streamlit exists, run `streamlit run dashboard/Overview.py` from that shell — observe `ModuleNotFoundError: No module named 'httpx'` (C-016).
+3. Activate `.venv` and run `python -m streamlit run dashboard/Overview.py` — observe success.
+
+Expected result:
+The identical command succeeds or fails purely based on interpreter selection.
+
+Lesson:
+"Works on my machine" is interpreter-specific. Pin interpreters in scripts and containers.

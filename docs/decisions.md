@@ -696,3 +696,139 @@ Failure mode avoided:
 
 When reconsider:
 Do not reconsider. AI explainability is a strict requirement for production financial systems.
+
+## D-042: Streamlit for the hackathon dashboard
+
+Decision:
+Build the dashboard in Streamlit instead of a JavaScript frontend.
+
+Reason:
+The team is backend-strong and deadline-constrained; Streamlit requires zero build tooling.
+
+Tradeoff:
+Less UI control; not suitable as a production customer-facing framework.
+
+Failure mode avoided:
+Wasting hackathon time on frontend tooling instead of correctness work.
+
+When reconsider:
+Post-hackathon, if the product goes to market (React/Next.js).
+
+## D-043: Dashboard consumes the REST API, never the database
+
+Decision:
+Streamlit calls FastAPI `/dashboard` endpoints exclusively.
+
+Reason:
+Preserves security scoping, pagination limits, and aggregation logic in one place.
+
+Tradeoff:
+Slightly more latency than direct SQL.
+
+Failure mode avoided:
+Frontends bypassing controls, unbounded queries, and duplicated business logic.
+
+When reconsider:
+Do not reconsider.
+
+## D-044: Serve the merchant list from the API instead of client-side placeholders
+
+Decision:
+Added `GET /dashboard/merchants`; clients never hardcode identifiers.
+
+Reason:
+Placeholder ids break typed UUID validation and multi-tenant scoping.
+
+Tradeoff:
+One extra endpoint to maintain.
+
+Failure mode avoided:
+422 errors and cross-tenant ambiguity from fabricated identifiers.
+
+When reconsider:
+Do not reconsider.
+
+## D-045: Idempotent demo seed dataset for evaluation
+
+Decision:
+`scripts/seed_demo_data.py` creates a deterministic Demo Merchant with 35 cases across statuses, actions, and audit trails; it skips if the merchant already exists.
+
+Reason:
+Judges need a populated, explainable dashboard without requiring live traffic.
+
+Tradeoff:
+Synthetic demo data coexists with real test data (clearly named).
+
+Failure mode avoided:
+Empty-dashboard demos that look broken.
+
+When reconsider:
+Replace with real onboarding data in production.
+
+## D-046: Pin the interpreter in all launcher scripts
+
+Decision:
+`run_all.ps1` activates `.venv` and uses `python -m ...` in every spawned window.
+
+Reason:
+Windows terminals do not inherit venv activation (C-016).
+
+Tradeoff:
+Launcher ceremony.
+
+Failure mode avoided:
+Services silently running under the wrong interpreter with missing dependencies.
+
+When reconsider:
+Never locally; containers make this moot in production.
+
+## D-047: Anchor cross-process artifacts to the repository root
+
+Decision:
+`simulation_results.json` is written and read via `__file__`-anchored absolute paths.
+
+Reason:
+Process CWD differs across terminals and Streamlit (C-019).
+
+Tradeoff:
+Path logic coupled to repository layout.
+
+Failure mode avoided:
+Missing artifacts despite successful runs.
+
+When reconsider:
+Move the artifact into the database or object storage in production.
+
+## D-048: Live operational KPIs aligned to the problem statement
+
+Decision:
+The metrics endpoint additionally returns `total_actions` and `avg_time_to_recovery_hours`, computed in SQL.
+
+Reason:
+The problem statement tracks action counts and time-to-recovery, not only revenue.
+
+Tradeoff:
+Two extra aggregate queries per metrics load.
+
+Failure mode avoided:
+A dashboard that hides the operational cost of recovery.
+
+When reconsider:
+Materialize when query load demands.
+
+## D-049: Professional presentation standard for the judged UI
+
+Decision:
+No emojis; humanized enum labels; ASCII diagrams rendered in code blocks; SIMULATED BENCHMARK banners on every synthetic view.
+
+Reason:
+The panel evaluates engineering judgment; cosmetic noise and unlabeled synthetic data undermine trust.
+
+Tradeoff:
+Slightly more formatting code.
+
+Failure mode avoided:
+Perception of a toy project; misuse of synthetic numbers.
+
+When reconsider:
+Do not reconsider.

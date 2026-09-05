@@ -414,3 +414,115 @@ Requires careful attention to what data is actually needed by the API response t
 
 ### What we learned
 ORM objects must be fully materialized before the database session is closed. When handing ORM objects off to a serialization layer (like Pydantic), ensure `expire_on_commit=False` or explicitly eager-load all required relationships to prevent `DetachedInstanceError`.
+
+---
+
+## C-016: Streamlit crashed with ModuleNotFoundError: No module named 'httpx'
+
+### Problem
+Dashboard pages failed at `import httpx` in `dashboard/api_client.py` even though `httpx` is in `requirements.txt` and `pytest` passed.
+
+### Symptoms
+Streamlit traceback pointed at `import httpx`; the test suite was green in the same repository.
+
+### Root cause
+Streamlit was running under the system Python, not the project venv. `run_all.ps1` spawned new PowerShell windows that never activated `.venv`, and new Windows terminals do not inherit venv activation. The system Python had Streamlit but not `httpx`.
+
+### Investigation
+`pytest` passing proved `httpx` existed in the venv; the failure only under Streamlit implied a different interpreter. `where.exe python` showed the system Python first in the failing shell.
+
+### Fix
+Launched Streamlit via the venv interpreter (`python -m streamlit run dashboard/Overview.py`) and rewrote `run_all.ps1` so every spawned window activates `.venv` and uses `python -m ...` command forms.
+
+### Why the fix worked
+`python -m streamlit` resolves the activated venv's interpreter, so every import resolves against the venv site-packages.
+
+### Tradeoff
+Launcher scripts must carry the activation ceremony.
+
+### What we learned
+Spawned processes never inherit venv activation on Windows. Production must pin interpreters via containers or process managers to eliminate interpreter drift.
+
+---
+
+## C-017: 422 on /dashboard/metrics from hardcoded placeholder merchant id
+
+### Problem
+The Metrics page errored with `422 Unprocessable Content` for URL `/dashboard/metrics/demo-merchant-id`.
+
+### Symptoms
+Streamlit error banner; API returned 422.
+
+### Root cause
+`api_client.get_merchants()` returned a hardcoded placeholder string `"demo-merchant-id"`, which is not a UUID. The endpoint path parameter is typed `UUID`, so FastAPI rejected the request before the handler ran.
+
+### Investigation
+A 422 (validation) rather than 404/500 pointed at path-parameter typing; inspected the router signature `merchant_id: UUID`.
+
+### Fix
+Added `GET /dashboard/merchants` serving real merchants from the database; the client now fetches and passes real UUIDs. Added idempotent `scripts/seed_demo_data.py` so the demo merchant has data.
+
+### Why the fix worked
+Real UUIDs pass validation and preserve multi-tenant scoping.
+
+### Tradeoff
+The dashboard now depends on the merchant-list endpoint's availability.
+
+### What we learned
+Never hardcode identifiers in clients. Typed path parameters catch bad clients at the edge — that is a feature, not an inconvenience.
+
+---
+
+## C-018: Metrics all zero because the default merchant had no cases
+
+### Problem
+After fixing the 422, the metrics endpoint returned 200 with all-zero values.
+
+### Symptoms
+`total_cases: 0` for the first merchant in the list.
+
+### Root cause
+The verification commands and the dashboard defaulted to the first merchant ordered by `created_at` — an old dev merchant with no recovery cases. The seeded Demo Merchant appeared later in the list.
+
+### Investigation
+`SELECT m.name, count(rc.id) FROM merchants m LEFT JOIN recovery_cases rc ... GROUP BY m.name` showed which merchants actually owned cases.
+
+### Fix
+Defaulted the merchant selectbox to "Demo Merchant" when present, and verified metrics against the merchant that owns data.
+
+### Why the fix worked
+The dashboard displays a populated merchant; the zeros were truthful for empty merchants.
+
+### Tradeoff
+Demo-oriented default; production would derive the merchant from the authentication context.
+
+### What we learned
+Distinguish "code bug" from "empty data": query the database truth before debugging correct code.
+
+---
+
+## C-019: simulation_results.json missing due to CWD-relative paths
+
+### Problem
+`run_simulation.py` printed the benchmark but `simulation_results.json` was not found, and the Simulation page showed "no results".
+
+### Symptoms
+`Test-Path simulation_results.json` returned False in the repo root; Streamlit (started from a different CWD) could not read it either.
+
+### Root cause
+The writer and reader used CWD-relative `Path("simulation_results.json")`, and the save block was initially absent/mis-indented. Long-running tools like Streamlit may start with an arbitrary working directory.
+
+### Investigation
+Compared the process CWDs of the terminal and Streamlit; located the path-resolution mismatch.
+
+### Fix
+Anchored both writer and reader to the repository root via `Path(__file__).resolve().parents[1]` (script) and `parents[2]` (dashboard page).
+
+### Why the fix worked
+Artifact location no longer depends on the process working directory.
+
+### Tradeoff
+Path logic is coupled to the repository layout.
+
+### What we learned
+Cross-process file artifacts must be anchored to the repository root, never to the process working directory.

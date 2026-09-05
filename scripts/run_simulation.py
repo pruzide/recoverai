@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from app.simulation.population import generate_population
 
 
 def format_inr(amount_minor: int) -> str:
+    """Format paise as INR string."""
     rupees = amount_minor / 100
     return f"₹{rupees:,.2f}"
 
@@ -63,8 +65,9 @@ def print_results(baseline, recoverai, incremental, population_size, seed):
 
 def main():
     parser = argparse.ArgumentParser(description="Run RecoverAI simulated business experiment")
-    parser.add_argument("--size", type=int, default=10_000, help="Population size")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--size", type=int, default=10_000, help="Number of synthetic failed payments (default: 10000)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42)")
+
     args = parser.parse_args()
 
     print(f"\nGenerating {args.size:,} synthetic failed payments (seed={args.seed})...")
@@ -75,6 +78,41 @@ def main():
     incremental = calculate_incremental_recovered_revenue(baseline, recoverai)
 
     print_results(baseline, recoverai, incremental, args.size, args.seed)
+
+    # --- JSON SAVE BLOCK (GUARANTEED ABSOLUTE PATH) ---
+    project_root = Path(__file__).resolve().parents[1]
+    output_path = project_root / "simulation_results.json"
+
+    results_for_dashboard = {
+        "baseline": {
+            "total_cases": baseline.total_cases,
+            "recovered_cases": baseline.recovered_cases,
+            "recovery_rate": baseline.recovery_rate,
+            "total_amount_at_risk_minor": baseline.total_amount_at_risk_minor,
+            "recovered_amount_minor": baseline.recovered_amount_minor,
+            "total_contacts": baseline.total_contacts,
+            "avg_time_to_recovery_hours": baseline.avg_time_to_recovery_hours,
+            "action_counts": baseline.action_counts,
+        },
+        "recoverai": {
+            "total_cases": recoverai.total_cases,
+            "recovered_cases": recoverai.recovered_cases,
+            "recovery_rate": recoverai.recovery_rate,
+            "total_amount_at_risk_minor": recoverai.total_amount_at_risk_minor,
+            "recovered_amount_minor": recoverai.recovered_amount_minor,
+            "total_contacts": recoverai.total_contacts,
+            "avg_time_to_recovery_hours": recoverai.avg_time_to_recovery_hours,
+            "action_counts": recoverai.action_counts,
+        },
+        "incremental_recovered_revenue_minor": incremental,
+        "population_size": args.size,
+        "seed": args.seed,
+    }
+
+    with open(output_path, "w") as f:
+        json.dump(results_for_dashboard, f, indent=2)
+
+    print(f"  Results saved to {output_path}")
 
 
 if __name__ == "__main__":

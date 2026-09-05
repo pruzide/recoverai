@@ -259,3 +259,24 @@ The /dashboard/cases/{id} endpoint returns the complete audit_trail for a recove
 - The final executed action.
 
 This ensures that every automated financial intervention is fully auditable and explainable to support agents and compliance officers.
+
+## Presentation Layer (Milestone 12)
+
+### Stack & Pages
+Streamlit multi-page app: Overview, Metrics, Cases, Simulation. Entry file `dashboard/Overview.py` (professional sidebar label). No emojis; humanized status labels; ASCII architecture diagram rendered via `st.code`.
+
+### Data Flow
+Streamlit → HTTP → FastAPI `/dashboard` → PostgreSQL. The frontend never touches the database.
+
+### Simulation Integration
+The Simulation page reads `simulation_results.json` anchored to the repo root; the simulator writes it with the same anchor, independent of process CWD.
+
+### Operations
+`scripts/run_all.ps1` starts Docker, migrations, Celery worker, outbox dispatcher, FastAPI, and Streamlit; every spawned window activates `.venv` and uses `python -m ...` to pin the interpreter (see C-016, D-046).
+
+### Presentation Standards
+Live metrics never mix synthetic data; every benchmark view carries the SIMULATED BENCHMARK banner.
+
+## Capacity Assumptions & Future Evolution
+- Target assumption: 1M payment events/day (~12/s avg, 20× burst). Current design scales via stateless API, queue buffering, horizontal workers, indexed PostgreSQL.
+- Next steps only when measured: read replicas/materialized views for dashboards, PgBouncer, Kafka when replay/multi-consumer streaming is required, m

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +9,7 @@ from app.api.schemas import (
     AuditTimelineEntry,
     CaseDetail,
     CaseSummary,
+    MerchantSummary,
     MetricSummary,
     PaginatedCases,
 )
@@ -18,6 +19,7 @@ from app.services.dashboard_service import (
     get_case_explainability,
     get_merchant_metrics,
     get_paginated_cases,
+    list_merchants,
 )
 
 
@@ -31,6 +33,12 @@ def get_db_session():
         yield session
     finally:
         session.close()
+
+
+@router.get("/merchants", response_model=List[MerchantSummary])
+def read_merchants(session: Session = Depends(get_db_session)):
+    merchants = list_merchants(session)
+    return [MerchantSummary(id=m.id, name=m.name) for m in merchants]
 
 
 @router.get("/metrics/{merchant_id}", response_model=MetricSummary)
