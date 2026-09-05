@@ -12,6 +12,7 @@ from app.db import check_database
 from app.observability import setup_logging
 from app.redis_client import check_redis
 from app.webhooks.razorpay import router as razorpay_webhook_router
+from app.api.dashboard import router as dashboard_router
 
 
 setup_logging()
@@ -35,6 +36,7 @@ app = FastAPI(
 )
 
 app.include_router(razorpay_webhook_router)
+app.include_router(dashboard_router)
 
 
 @app.middleware("http")
