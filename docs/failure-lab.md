@@ -154,3 +154,27 @@ AI failure reduces optimization quality, but it must never take down revenue rec
 
 Correct future design:
 Always wrap LLM calls in strict Pydantic schemas and provide a deterministic fallback path that guarantees forward progress.
+
+## Lab 8: Stale Execution Protection (Final Policy Check)
+
+Goal:
+Prove that the final policy check prevents external side effects when the recovery case state has changed (e.g., customer paid) between action approval and execution.
+
+Experiment:
+Run `python labs/stale_execution_lab.py`.
+1. Create a recovery case and an approved `CREATE_PAYMENT_LINK` action in the database.
+2. Simulate the customer paying by manually transitioning the case to `RECOVERED` in the database.
+3. Run the action executor against the approved action.
+4. Observe the final state of the case and the action.
+
+Expected result:
+- Executor result: `{'status': 'cancelled', 'reason': 'terminal_state_protected'}`
+- Case status remains: `RECOVERED`
+- Action status transitions to: `CANCELLED`
+- No external Razorpay API call is made.
+
+Lesson:
+State can change between the moment an action is approved and the moment a worker picks it up. Relying solely on the historical `APPROVED` status is unsafe. A final, real-time policy and state check is mandatory to prevent stale side effects.
+
+Correct future design:
+Always re-evaluate policy and terminal state protections inside the executor immediately before making external network calls.

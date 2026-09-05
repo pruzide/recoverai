@@ -509,3 +509,88 @@ The agent bypassing limits, terminal-state protection, or high-value escalation 
 
 When reconsider:
 Do not reconsider. Policy is the final authority.
+
+## D-031: Execute external side effects outside database transactions
+
+Decision:
+Call external APIs (like Razorpay) only after the database transaction that claims the action has committed.
+
+Reason:
+Holding database connections open during slow or unreliable network calls leads to connection pool exhaustion and lock contention.
+
+Tradeoff:
+Requires a two-phase execution model (claim in DB, execute externally, finalize in DB).
+
+Failure mode avoided:
+Database connection pool starvation and cascading timeouts during external provider outages.
+
+When reconsider:
+Do not reconsider. Network calls must never block database connection pools.
+
+## D-032: Claim actions atomically before execution
+
+Decision:
+Use an atomic `UPDATE ... WHERE status = 'APPROVED'` to transition actions to `EXECUTING` before calling external APIs.
+
+Reason:
+Prevents multiple concurrent workers from executing the same approved action and creating duplicate side effects (e.g., two payment links).
+
+Tradeoff:
+Requires an additional database write per execution.
+
+Failure mode avoided:
+Duplicate financial side effects caused by queue redelivery or concurrent worker scaling.
+
+When reconsider:
+Do not reconsider. Atomic claiming is mandatory for effectively-once external execution.
+
+## D-033: Enforce final policy check immediately before execution
+
+Decision:
+Re-evaluate the deterministic policy engine and case state immediately before executing an external side effect.
+
+Reason:
+The state of the world can change between action approval and execution (e.g., the customer pays via another method).
+
+Tradeoff:
+Adds a small amount of latency and extra database queries per execution.
+
+Failure mode avoided:
+Executing stale actions, such as sending a payment link or reminder after the case has already transitioned to `RECOVERED`.
+
+When reconsider:
+Do not reconsider. Final authority must always rest with the current database state, not historical approvals.
+
+## D-034: Use provider notes for recovery case mapping
+
+Decision:
+Inject RecoverAI identifiers (merchant ID, recovery case ID, action ID) into the `notes` field of Razorpay payment links.
+
+Reason:
+When a customer pays via a payment link, Razorpay generates a completely new `payment_id`. The notes allow the incoming `payment.captured` webhook to be deterministically mapped back to the original recovery case.
+
+Tradeoff:
+Relies on the external provider preserving and returning the `notes` payload in webhooks.
+
+Failure mode avoided:
+Orphaned successful payments that cannot be linked to the recovery effort that generated them.
+
+When reconsider:
+If the provider drops support for custom metadata in webhooks, a separate reconciliation mapping table would be required.
+
+## D-035: Add `deliver_at` to outbox for scheduled delivery
+
+Decision:
+Add a `deliver_at` timestamp column to the `outbox_events` table to support delayed task dispatch.
+
+Reason:
+Recovery strategies often require waiting (e.g., "wait 24 hours before sending a reminder"). The outbox dispatcher must respect these delays natively.
+
+Tradeoff:
+Requires the dispatcher query to check `deliver_at IS NULL OR deliver_at <= NOW()`.
+
+Failure mode avoided:
+Premature execution of scheduled actions or relying on fragile external cron/sleep mechanisms.
+
+When reconsider:
+Do not reconsider. Durable scheduled delivery is a core requirement for recovery workflows.

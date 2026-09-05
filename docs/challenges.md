@@ -277,3 +277,31 @@ No production code was changed; only test expectations were updated.
 
 ### What we learned
 When changing internal task result schemas, all contract tests and downstream consumers must be updated in the same change set to prevent silent breakages.
+
+---
+
+## C-011: PowerShell output capturing introduces trailing whitespace breaking PostgreSQL UUID queries
+
+### Problem
+After capturing a UUID from a database query into a PowerShell variable to use in a subsequent query, PostgreSQL rejected the UUID with `invalid input syntax for type uuid`.
+
+### Symptoms
+`psql` threw an error showing a trailing space or newline inside the UUID string literal (e.g., `'1f0cdf18... '`).
+
+### Root cause
+PowerShell's command substitution captures standard output including trailing newlines or carriage returns. When interpolated into the SQL string, it resulted in an invalid UUID format that PostgreSQL's strict `uuid` type rejected.
+
+### Investigation
+Inspected the error message which explicitly showed the trailing whitespace inside the single quotes of the SQL query.
+
+### Fix
+Applied `.Trim()` to the captured PowerShell variable, or used `psql -Atc` (unaligned, tuples-only) to strip formatting and whitespace from the database output before capturing it.
+
+### Why the fix worked
+Removing the invisible whitespace restored the strict 36-character UUID format required by PostgreSQL.
+
+### Tradeoff
+Requires strict discipline when passing shell variables into database queries.
+
+### What we learned
+Shell variable interpolation into strict database types requires careful stripping of invisible whitespace and newlines. Using database-native formatting flags (like `-Atc`) prevents these injection formatting bugs.

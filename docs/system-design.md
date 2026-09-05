@@ -192,3 +192,33 @@ The audit payload now captures the full decision lineage:
 5. final_action (actual permitted action)
 
 This supports future ML training by recording context-action-outcome tuples and comparing deterministic vs. agent-assisted recovery rates.
+
+### End-to-End Execution & Provider Integration (Milestone 9)
+RecoverAI connects the recovery brain to real-world financial side effects safely and idempotently.
+
+### Execution Model
+Approved scheduled actions are executed by a dedicated worker flow:
+
+- The outbox dispatcher publishes due events (respecting deliver_at schedules). 
+- The worker loads the action and recovery case.
+- Final Policy Check: The worker re-evaluates the deterministic policy engine and checks for terminal states. If the case is already RECOVERED or policy limits are now exceeded, the action is cancelled.
+- Action Claim: The worker atomically transitions the action from APPROVED to EXECUTING to prevent duplicate execution by concurrent workers.
+- External Execution: The worker calls the external provider (e.g., Razorpay) outside the database transaction to prevent connection pool exhaustion.
+- Finalization: The worker records the success/failure, stores the provider reference, and transitions the case safely (e.g., ACTION_SCHEDULED -> WAITING).
+
+### Razorpay Payment Links & Notes Mapping
+When creating a Razorpay payment link, RecoverAI injects its own identifiers into the provider's notes metadata:
+
+- recoverai_merchant_id
+- recoverai_recovery_case_id
+- recoverai_recovery_action_id
+- recoverai_original_payment_reference
+
+When the customer pays and Razorpay sends a payment.captured webhook, the webhook handler extracts these notes to deterministically map the new payment back to the original recovery case, transitioning it to RECOVERED and cancelling any pending actions.
+
+### Scheduled Outbox Delivery
+The outbox_events table includes a deliver_at timestamp. The dispatcher only publishes events where deliver_at IS NULL OR deliver_at <= NOW(). This provides durable, database-backed delayed execution for strategies like WAIT, without relying on fragile in-memory sleeps or external cron jobs.
+
+### Failure Handling & Reconciliation
+External calls use strict timeouts. If an external call succeeds but the worker crashes before finalizing the database state, the action remains in EXECUTING. Production reconciliation processes must query the external provider using the stable idempotency_key (passed as reference_id) to determine if the side effect actually occurred before retrying.
+
