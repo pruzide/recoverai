@@ -356,3 +356,61 @@ Aligned the policy thresholds and simulated outcome probabilities with realistic
 
 ### What we learned
 Simulations are highly sensitive to underlying assumptions. A misconfigured policy threshold combined with pessimistic outcome probabilities can make a smart system look worse than a dumb one. Tuning assumptions to reflect realistic operational capacity is critical before drawing business conclusions.
+
+---
+
+## C-014: Orphaned recovery cases due to missing provider notes in webhook payload
+
+### Problem
+After successfully executing a Razorpay payment link creation, the simulated `payment.captured` webhook arrived, but the recovery case remained stuck in the `WAITING` state instead of transitioning to `RECOVERED`.
+
+### Symptoms
+- The webhook endpoint returned HTTP 200.
+- A new `payments` row was created with `status = CAPTURED`.
+- The original `recovery_cases` row remained `WAITING`.
+
+### Root cause
+The manual test script (`send_recovery_success_webhook.py`) initially constructed the webhook payload without properly nesting the `notes` dictionary inside the `payment.entity` object. Because the `notes` were missing, the webhook handler fell back to matching the recovery case via the `provider_payment_id`. Since a payment link generates a completely new `payment_id`, the fallback match failed, resulting in an orphaned successful payment.
+
+### Investigation
+Inspected the `audit_events` and `payments` tables. Confirmed the new payment existed but had no linked recovery case. Reviewed the webhook handler logic and realized the `notes` extraction was returning `None`.
+
+### Fix
+Updated the test script to correctly inject the `recoverai_recovery_case_id` into the `notes` payload of the simulated webhook, and ensured `razorpay_schemas.py` correctly parsed the `notes` field.
+
+### Why the fix worked
+Providing the correct metadata allowed the webhook handler to deterministically map the new payment back to the original recovery case.
+
+### Tradeoff
+Relies heavily on the external provider preserving custom metadata in webhooks.
+
+### What we learned
+When integrating with external payment gateways, custom metadata (like `notes`) is the only reliable way to link asynchronous side effects (like a new payment link) back to internal business state. Fallback matching on payment IDs is insufficient for generated links.
+
+---
+
+## C-015: SQLAlchemy `DetachedInstanceError` during Pydantic serialization
+
+### Problem
+The new `/dashboard/cases` endpoint crashed with a 500 Internal Server Error when returning paginated results.
+
+### Symptoms
+FastAPI logs showed `sqlalchemy.exc.DetachedInstanceError: Instance <RecoveryCase> is not bound to a Session; lazy load operation of attribute 'merchant' cannot proceed`.
+
+### Root cause
+The database session was being closed (via the `yield` context manager in the FastAPI dependency) before Pydantic finished serializing the response model. Pydantic attempted to access a lazy-loaded relationship or attribute after the session was already torn down.
+
+### Investigation
+Traced the error to the response serialization phase. Realized that the `get_db_session` dependency closes the session immediately after the route handler returns the ORM objects, but FastAPI's response middleware serializes them *after* the dependency cleanup.
+
+### Fix
+Ensured that all required attributes were explicitly loaded within the active session context before returning, and configured the session factory with `expire_on_commit=False` to prevent attributes from expiring and requiring a lazy load during serialization.
+
+### Why the fix worked
+Materializing all necessary data while the session was still active prevented Pydantic from triggering lazy loads against a closed database connection.
+
+### Tradeoff
+Requires careful attention to what data is actually needed by the API response to avoid over-fetching.
+
+### What we learned
+ORM objects must be fully materialized before the database session is closed. When handing ORM objects off to a serialization layer (like Pydantic), ensure `expire_on_commit=False` or explicitly eager-load all required relationships to prevent `DetachedInstanceError`.

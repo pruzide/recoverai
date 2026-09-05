@@ -645,3 +645,54 @@ Flaky experiments where strategy improvements cannot be proven because the under
 
 When reconsider:
 Do not reconsider.
+
+## D-039: Calculate metrics via SQL aggregation, not Python
+
+Decision:
+Calculate dashboard metrics (recovery rates, total revenue) using PostgreSQL `SUM` and `COUNT` aggregations rather than loading rows into Python.
+
+Reason:
+Loading thousands of financial records into application memory to calculate sums causes Out-Of-Memory (OOM) crashes and API timeouts at scale.
+
+Tradeoff:
+Requires writing more complex SQL queries via SQLAlchemy instead of simple Python loops.
+
+Failure mode avoided:
+API memory exhaustion and database connection pool starvation during dashboard loads.
+
+When reconsider:
+If analytical queries become too complex for OLTP PostgreSQL, we would introduce a dedicated OLAP database or materialized views, but never Python-level aggregation.
+
+## D-040: Enforce strict pagination limits on read APIs
+
+Decision:
+Enforce strict `LIMIT` and `OFFSET` bounds on all list endpoints using Pydantic `Query` validation (e.g., `le=100`).
+
+Reason:
+Unbounded queries from a frontend or malicious actor can return millions of rows, crashing the API, the database, and the client browser.
+
+Tradeoff:
+Clients must implement pagination logic to view large datasets.
+
+Failure mode avoided:
+Denial of Service (DoS) via unbounded database scans and network saturation.
+
+When reconsider:
+Do not reconsider. Unbounded list APIs are a critical security and stability vulnerability.
+
+## D-041: Expose raw audit payloads for AI explainability
+
+Decision:
+Return the full, raw JSONB `payload` from `audit_events` in the case detail API endpoint.
+
+Reason:
+Compliance officers and customer support agents must understand exactly *why* the Agentic AI or Policy Engine made a specific decision. The raw payload contains the `agent_source`, `agent_reason`, and `policy_approved` flags necessary for explainability.
+
+Tradeoff:
+The API response payload can become large if the audit history is extensive.
+
+Failure mode avoided:
+"Black box" AI decisions that cannot be audited, explained, or defended to merchants and regulators.
+
+When reconsider:
+Do not reconsider. AI explainability is a strict requirement for production financial systems.

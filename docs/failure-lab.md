@@ -200,3 +200,24 @@ A simulation only proves that *Strategy A beats Strategy B under Assumption Set 
 
 Correct future design:
 Always pair synthetic benchmarking with a plan for real-world A/B testing (holdout groups) to validate the simulated hypotheses.
+
+## Lab 10: Unpaginated API Memory Crash
+
+Goal:
+Prove why bounded pagination and SQL-level aggregation are mandatory for dashboard APIs, and why Python-level processing of large datasets causes system crashes.
+
+Experiment:
+Run `python labs/unpaginated_api_lab.py`.
+1. Generate 50,000 synthetic recovery cases in the database.
+2. Execute the "Naive Approach": Load all 50,000 SQLAlchemy ORM objects into a Python list and calculate the recovery rate using a Python `sum()` generator. Measure memory and time.
+3. Execute the "Correct Approach": Use a single PostgreSQL `SELECT COUNT(...), SUM(CASE...)` query to calculate the exact same metrics. Measure memory and time.
+
+Expected result:
+- Naive Approach: Consumes >100 MB of RAM and takes several seconds.
+- Correct Approach: Consumes <1 MB of RAM and executes in milliseconds.
+
+Lesson:
+Application memory is a strictly bounded resource. Pushing mathematical aggregations down to the database engine prevents Out-Of-Memory (OOM) crashes and ensures API latency remains predictable regardless of data volume.
+
+Correct future design:
+Never use `session.query(Model).all()` for metrics or dashboards. Always use SQL aggregation functions and strict `LIMIT`/`OFFSET` pagination.

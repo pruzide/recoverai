@@ -237,3 +237,25 @@ The simulator proves that the deterministic engine and policy logic scale correc
 
 All outputs are strictly labelled SIMULATED BENCHMARK — NOT PRODUCTION DATA.
 Simulated probabilities are hypotheses. Real-world validation requires production deployment with holdout groups to measure actual incremental recovered revenue.
+
+### Dashboard API, Metrics, and Explainability (Milestone 11)
+RecoverAI exposes a strictly bounded, read-optimized API layer for merchant dashboards and AI observability.
+
+### CQRS and Read/Write Separation
+The system logically separates the write-path (webhooks, workers, execution) from the read-path (dashboard API). Read operations never block write transactions and never trigger side effects.
+
+### SQL-Level Aggregation
+Dashboard metrics (Recovery Rate, Revenue at Risk, Recovered Revenue) are calculated using PostgreSQL SUM, COUNT, and CASE aggregations. This prevents the API from loading thousands of ORM objects into memory, ensuring sub-100ms response times even for merchants with millions of failed payments.
+
+### Strict Pagination
+All list endpoints enforce strict pagination limits (e.g., maximum 100 rows per request) via Pydantic Query validation. This protects the database from unbounded scans and the API from memory exhaustion.
+
+### AI Explainability
+The /dashboard/cases/{id} endpoint returns the complete audit_trail for a recovery case. By exposing the raw JSONB payloads from audit_events, the system provides full transparency into the decision lineage:
+
+- What the deterministic engine recommended.
+- What the LangGraph agent suggested (and its confidence/reasoning).
+- Whether the policy engine approved or denied the action.
+- The final executed action.
+
+This ensures that every automated financial intervention is fully auditable and explainable to support agents and compliance officers.
