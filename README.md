@@ -1,4 +1,3 @@
-````markdown
 # RecoverAI
 
 A distributed, fault-tolerant **revenue recovery engine** for failed payment transactions.
@@ -770,4 +769,4 @@ External Financial Side Effect
 ```
 
 > **AI chooses strategy. Deterministic software owns correctness.**
-````
+
