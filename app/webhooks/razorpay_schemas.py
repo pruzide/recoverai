@@ -1,7 +1,7 @@
 import json
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 
 class RazorpayPaymentEntity(BaseModel):
@@ -11,6 +11,7 @@ class RazorpayPaymentEntity(BaseModel):
     status: Optional[str] = None
     error_code: Optional[str] = None
     error_description: Optional[str] = None
+    notes: Optional[Dict[str, Any]] = None
 
 
 class RazorpayWebhook(BaseModel):

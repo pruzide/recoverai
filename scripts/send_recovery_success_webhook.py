@@ -1,4 +1,4 @@
-﻿import hashlib
+import hashlib
 import hmac
 import json
 import sys
@@ -13,35 +13,34 @@ from app.config import settings
 
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         print(
-            "Usage: python scripts/send_local_webhook.py "
-            "MERCHANT_ID [event_type] [payment_id] [event_id] [error_code]"
+            "Usage: python scripts/send_recovery_success_webhook.py "
+            "MERCHANT_ID RECOVERY_CASE_ID [AMOUNT_MINOR] [EVENT_ID] [NEW_PAYMENT_ID]"
         )
         sys.exit(1)
 
     merchant_id = sys.argv[1]
-    event_type = sys.argv[2] if len(sys.argv) > 2 else "payment.failed"
-    payment_id = sys.argv[3] if len(sys.argv) > 3 else f"pay_{uuid.uuid4().hex}"
-    event_id = sys.argv[4] if len(sys.argv) > 4 else f"evt_{uuid.uuid4().hex}"
-    error_code = sys.argv[5] if len(sys.argv) > 5 else "expired_instrument"
+    recovery_case_id = sys.argv[2]
 
-    status = "failed" if event_type == "payment.failed" else "captured"
+    amount_minor = int(sys.argv[3]) if len(sys.argv) > 3 else 7999
+    event_id = sys.argv[4] if len(sys.argv) > 4 else f"evt_{uuid.uuid4().hex}"
+    new_payment_id = sys.argv[5] if len(sys.argv) > 5 else f"pay_{uuid.uuid4().hex}"
 
     payload = {
         "id": event_id,
-        "event": event_type,
+        "event": "payment.captured",
         "payload": {
             "payment": {
                 "entity": {
-                    "id": payment_id,
-                    "amount": 7999,
+                    "id": new_payment_id,
+                    "amount": amount_minor,
                     "currency": "INR",
-                    "status": status,
-                    "error_code": error_code if event_type == "payment.failed" else None,
-                    "error_description": "Simulated local failure"
-                    if event_type == "payment.failed"
-                    else None,
+                    "status": "captured",
+                    "notes": {
+                        "recoverai_merchant_id": merchant_id,
+                        "recoverai_recovery_case_id": recovery_case_id,
+                    },
                 }
             }
         },

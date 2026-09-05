@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional
-import uuid
+from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -61,7 +61,7 @@ def classify_failure(error_code: Optional[str]) -> str:
 
 def insert_audit(
     session: Session,
-    merchant_id: uuid.UUID,
+    merchant_id: UUID,
     entity_type: str,
     entity_id: str,
     event_type: str,
@@ -84,7 +84,7 @@ def insert_audit(
 
 def insert_outbox_if_missing(
     session: Session,
-    merchant_id: uuid.UUID,
+    merchant_id: UUID,
     aggregate_type: str,
     aggregate_id: str,
     event_type: str,
@@ -118,7 +118,7 @@ def insert_outbox_if_missing(
 
 def get_payment_by_provider(
     session: Session,
-    merchant_id: uuid.UUID,
+    merchant_id: UUID,
     provider_payment_id: str,
 ) -> Optional[Payment]:
     return session.execute(
@@ -132,7 +132,7 @@ def get_payment_by_provider(
 
 def get_recovery_case_by_payment(
     session: Session,
-    payment_id: uuid.UUID,
+    payment_id: UUID,
 ) -> Optional[RecoveryCase]:
     return session.execute(
         select(RecoveryCase).where(
@@ -286,47 +286,13 @@ def handle_payment_failed(
     }
 
 
-def handle_payment_captured(
+def _mark_case_recovered(
     session: Session,
     merchant: Merchant,
-    entity: RazorpayPaymentEntity,
-    amount_minor: int,
-    currency: str,
+    payment: Payment,
+    case: RecoveryCase,
     correlation_id: Optional[str],
 ) -> dict:
-    payment = get_payment_by_provider(
-        session,
-        merchant.id,
-        entity.id,
-    )
-
-    if payment is None:
-        payment = Payment(
-            merchant_id=merchant.id,
-            provider="razorpay",
-            provider_payment_id=entity.id,
-            status=PaymentStatus.CAPTURED,
-            amount_minor=amount_minor,
-            currency=currency,
-            captured_at=utcnow(),
-        )
-
-        session.add(payment)
-        session.flush()
-    else:
-        if payment.status != PaymentStatus.CAPTURED:
-            payment.status = PaymentStatus.CAPTURED
-            payment.captured_at = utcnow()
-            session.flush()
-
-    case = get_recovery_case_by_payment(session, payment.id)
-
-    if case is None:
-        return {
-            "outcome": "payment_captured_no_recovery_case",
-            "payment_id": str(payment.id),
-        }
-
     if is_terminal(case.status):
         return {
             "outcome": "case_already_terminal",
@@ -349,7 +315,6 @@ def handle_payment_captured(
                 [
                     RecoveryActionStatus.PENDING,
                     RecoveryActionStatus.APPROVED,
-                    RecoveryActionStatus.EXECUTING,
                 ]
             ),
         )
@@ -392,6 +357,77 @@ def handle_payment_captured(
         "outcome": "recovery_case_recovered",
         "recovery_case_id": str(case.id),
     }
+
+
+def handle_payment_captured(
+    session: Session,
+    merchant: Merchant,
+    entity: RazorpayPaymentEntity,
+    amount_minor: int,
+    currency: str,
+    correlation_id: Optional[str],
+) -> dict:
+    payment = get_payment_by_provider(
+        session,
+        merchant.id,
+        entity.id,
+    )
+
+    if payment is None:
+        payment = Payment(
+            merchant_id=merchant.id,
+            provider="razorpay",
+            provider_payment_id=entity.id,
+            status=PaymentStatus.CAPTURED,
+            amount_minor=amount_minor,
+            currency=currency,
+            captured_at=utcnow(),
+        )
+
+        session.add(payment)
+        session.flush()
+    else:
+        if payment.status != PaymentStatus.CAPTURED:
+            payment.status = PaymentStatus.CAPTURED
+            payment.captured_at = utcnow()
+            session.flush()
+
+    notes = entity.notes or {}
+    recovery_case_id_raw = notes.get("recoverai_recovery_case_id")
+
+    if recovery_case_id_raw:
+        try:
+            recovery_case_id = UUID(str(recovery_case_id_raw))
+        except (ValueError, TypeError):
+            recovery_case_id = None
+
+        if recovery_case_id:
+            case = session.get(RecoveryCase, recovery_case_id)
+
+            if case and case.merchant_id == merchant.id:
+                return _mark_case_recovered(
+                    session=session,
+                    merchant=merchant,
+                    payment=payment,
+                    case=case,
+                    correlation_id=correlation_id,
+                )
+
+    case = get_recovery_case_by_payment(session, payment.id)
+
+    if case is None:
+        return {
+            "outcome": "payment_captured_no_recovery_case",
+            "payment_id": str(payment.id),
+        }
+
+    return _mark_case_recovered(
+        session=session,
+        merchant=merchant,
+        payment=payment,
+        case=case,
+        correlation_id=correlation_id,
+    )
 
 
 def process_razorpay_event(

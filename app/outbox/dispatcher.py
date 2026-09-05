@@ -1,8 +1,7 @@
 ﻿from datetime import datetime, timezone
-from typing import Optional
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.config import settings
 from app.db import get_session_factory
@@ -18,7 +17,7 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def dispatch_outbox_events(batch_size: Optional[int] = None) -> int:
+def dispatch_outbox_events(batch_size: int | None = None) -> int:
     limit = batch_size or settings.outbox_dispatch_batch_size
 
     SessionLocal = get_session_factory()
@@ -29,6 +28,12 @@ def dispatch_outbox_events(batch_size: Optional[int] = None) -> int:
             events = session.execute(
                 select(OutboxEvent)
                 .where(OutboxEvent.status == OutboxEventStatus.PENDING)
+                .where(
+                    or_(
+                        OutboxEvent.deliver_at.is_(None),
+                        OutboxEvent.deliver_at <= utcnow(),
+                    )
+                )
                 .order_by(OutboxEvent.created_at.asc())
                 .limit(limit)
                 .with_for_update(skip_locked=True)

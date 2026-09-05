@@ -96,6 +96,11 @@ class OutboxEvent(Base):
         nullable=True,
     )
 
+    deliver_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     __table_args__ = (
         CheckConstraint(
             "attempts >= 0",
@@ -105,6 +110,11 @@ class OutboxEvent(Base):
             "ix_outbox_events_status_created_at",
             "status",
             "created_at",
+        ),
+        Index(
+            "ix_outbox_events_status_deliver_at",
+            "status",
+            "deliver_at",
         ),
         Index(
             "ix_outbox_events_merchant_status",

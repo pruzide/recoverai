@@ -1,4 +1,5 @@
-﻿import uuid
+﻿from typing import Optional
+import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -66,34 +67,45 @@ def build_policy_input(
     case: RecoveryCase,
     candidate_action: RecoveryActionType,
     current_status: RecoveryCaseStatus,
+    exclude_action_id: Optional[uuid.UUID] = None,
 ) -> PolicyInput:
+    base_filters = [
+        RecoveryAction.recovery_case_id == case.id,
+        RecoveryAction.status.not_in(EXCLUDED_ACTION_COUNT_STATUSES),
+    ]
+
+    if exclude_action_id is not None:
+        base_filters.append(RecoveryAction.id != exclude_action_id)
+
     total_action_count = session.execute(
         select(func.count())
         .select_from(RecoveryAction)
-        .where(
-            RecoveryAction.recovery_case_id == case.id,
-            RecoveryAction.status.not_in(EXCLUDED_ACTION_COUNT_STATUSES),
-        )
+        .where(*base_filters)
     ).scalar_one()
+
+    reminder_filters = base_filters + [
+        RecoveryAction.action_type == RecoveryActionType.SEND_REMINDER,
+    ]
 
     reminder_count = session.execute(
         select(func.count())
         .select_from(RecoveryAction)
-        .where(
-            RecoveryAction.recovery_case_id == case.id,
-            RecoveryAction.action_type == RecoveryActionType.SEND_REMINDER,
-            RecoveryAction.status.not_in(EXCLUDED_ACTION_COUNT_STATUSES),
-        )
+        .where(*reminder_filters)
     ).scalar_one()
+
+    active_link_filters = [
+        RecoveryAction.recovery_case_id == case.id,
+        RecoveryAction.action_type == RecoveryActionType.CREATE_PAYMENT_LINK,
+        RecoveryAction.status.in_(ACTIVE_PAYMENT_LINK_STATUSES),
+    ]
+
+    if exclude_action_id is not None:
+        active_link_filters.append(RecoveryAction.id != exclude_action_id)
 
     active_payment_link_count = session.execute(
         select(func.count())
         .select_from(RecoveryAction)
-        .where(
-            RecoveryAction.recovery_case_id == case.id,
-            RecoveryAction.action_type == RecoveryActionType.CREATE_PAYMENT_LINK,
-            RecoveryAction.status.in_(ACTIVE_PAYMENT_LINK_STATUSES),
-        )
+        .where(*active_link_filters)
     ).scalar_one()
 
     return PolicyInput(
