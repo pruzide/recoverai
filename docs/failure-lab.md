@@ -178,3 +178,25 @@ State can change between the moment an action is approved and the moment a worke
 
 Correct future design:
 Always re-evaluate policy and terminal state protections inside the executor immediately before making external network calls.
+
+## Lab 9: Simulation Assumption Sensitivity
+
+Goal:
+Prove that simulated business results are highly dependent on the underlying outcome probability assumptions, justifying the strict "SIMULATED BENCHMARK" labeling.
+
+Experiment:
+Run `python labs/simulation_assumption_lab.py`.
+1. Run the experiment with the original simulated recovery probabilities.
+2. Mutate the `SIMULATED_RECOVERY_PROBABILITIES` dictionary in memory to drastically reduce the effectiveness of `CREATE_PAYMENT_LINK` (e.g., 0.45 -> 0.10).
+3. Run the experiment again and observe the drop in RecoverAI's incremental revenue.
+4. Mutate the dictionary to increase the baseline `SEND_REMINDER` effectiveness.
+5. Run the experiment again and observe the baseline overtaking RecoverAI.
+
+Expected result:
+The exact same RecoverAI strategy produces vastly different financial outcomes depending entirely on the hardcoded probability assumptions.
+
+Lesson:
+A simulation only proves that *Strategy A beats Strategy B under Assumption Set X*. If Assumption Set X is wrong, the business conclusion is wrong. This is why synthetic benchmarks must never be presented as production truth, and why production holdout groups are mandatory for final validation.
+
+Correct future design:
+Always pair synthetic benchmarking with a plan for real-world A/B testing (holdout groups) to validate the simulated hypotheses.

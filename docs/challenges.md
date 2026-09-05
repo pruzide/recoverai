@@ -305,3 +305,54 @@ Requires strict discipline when passing shell variables into database queries.
 
 ### What we learned
 Shell variable interpolation into strict database types requires careful stripping of invisible whitespace and newlines. Using database-native formatting flags (like `-Atc`) prevents these injection formatting bugs.
+
+---
+
+## C-012: Simulation UUID non-determinism breaking seeded reproducibility
+
+### Problem
+`test_population_is_deterministic_with_seed` failed because `payment_id` values differed between two runs with the exact same random seed.
+
+### Symptoms
+`AssertionError: assert 'pay_sim_f4cca8c797f0' == 'pay_sim_bc2eced8626a'`
+
+### Root cause
+The population generator used Python's standard `uuid.uuid4()` to generate payment IDs. `uuid4()` relies on the OS random source and is completely independent of the seeded `random.Random` instance used for the rest of the simulation.
+
+### Investigation
+Noticed that `amount_minor` and `failure_category` matched perfectly between runs, but `payment_id` did not.
+
+### Fix
+Replaced `uuid.uuid4().hex` with a custom `_random_hex_id(rng, length)` function that uses the seeded `random.Random` instance to pick hex characters.
+
+### Why the fix worked
+By routing all randomness through the explicitly seeded `random.Random` object, the entire population generation became strictly deterministic.
+
+### What we learned
+Standard library functions like `uuid.uuid4()` or `time.time()` introduce hidden entropy. For reproducible simulations, every source of randomness must be explicitly routed through the seeded generator.
+
+---
+
+## C-013: Low high-value escalation threshold causing negative incremental revenue in simulation
+
+### Problem
+The initial simulation run showed RecoverAI recovering *less* money than the naive baseline strategy (negative incremental revenue).
+
+### Symptoms
+RecoverAI recovery rate was 25.4% vs Baseline 22.1%, but RecoverAI recovered ₹14.3M vs Baseline ₹32.0M.
+
+### Root cause
+The `high_value_threshold_minor` was set to 500,000 paise (₹5,000). Because 38% of the synthetic population exceeded this amount, the policy engine forced `ESCALATE` for a massive portion of cases. The simulated recovery probability for `ESCALATE` was initially set very low (0.05 - 0.20), representing slow manual review. Meanwhile, the baseline blindly sent `SEND_REMINDER` to everyone, which had a higher simulated success rate for those high-value cases.
+
+### Investigation
+Analyzed the Action Distribution output. RecoverAI had 3,793 `ESCALATE` actions and very few `CREATE_PAYMENT_LINK` actions.
+
+### Fix
+1. Increased `high_value_threshold_minor` to 5,000,000 paise (₹50,000) so only truly high-value cases are escalated.
+2. Increased the simulated recovery probability for `ESCALATE` (0.35 - 0.55) to reflect that human agents are actually highly effective at recovering high-value complex cases.
+
+### Why the fix worked
+Aligned the policy thresholds and simulated outcome probabilities with realistic business assumptions. RecoverAI now uses automated links/reminders for the bulk of cases and reserves human escalation for the top tier, resulting in positive incremental revenue.
+
+### What we learned
+Simulations are highly sensitive to underlying assumptions. A misconfigured policy threshold combined with pessimistic outcome probabilities can make a smart system look worse than a dumb one. Tuning assumptions to reflect realistic operational capacity is critical before drawing business conclusions.

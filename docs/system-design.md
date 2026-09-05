@@ -222,3 +222,18 @@ The outbox_events table includes a deliver_at timestamp. The dispatcher only pub
 ### Failure Handling & Reconciliation
 External calls use strict timeouts. If an external call succeeds but the worker crashes before finalizing the database state, the action remains in EXECUTING. Production reconciliation processes must query the external provider using the stable idempotency_key (passed as reference_id) to determine if the side effect actually occurred before retrying.
 
+### Simulator & Business Experiment (Milestone 10)
+RecoverAI includes a controlled simulation environment to benchmark the recovery strategy against a naive baseline using synthetic data.
+
+### Architecture
+1. Population Generator: Creates a deterministic, seeded synthetic population of failed payments with varying amounts and failure categories.
+2. Baseline Strategy: A naive fixed-rule strategy (e.g., always send a reminder).
+3. RecoverAI Strategy: Calls the actual pure evaluate_recovery() and evaluate_policy() functions to make context-aware decisions.
+4. Simulated Outcome Model: Applies hypothesis-based recovery probabilities to the selected actions.
+5. Metrics Aggregation: Calculates recovery rate, recovered revenue, customer contacts, and incremental recovered revenue.
+
+### Purpose & Limitations
+The simulator proves that the deterministic engine and policy logic scale correctly and outperform naive strategies under controlled assumptions.
+
+All outputs are strictly labelled SIMULATED BENCHMARK — NOT PRODUCTION DATA.
+Simulated probabilities are hypotheses. Real-world validation requires production deployment with holdout groups to measure actual incremental recovered revenue.

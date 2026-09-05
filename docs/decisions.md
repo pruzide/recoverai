@@ -594,3 +594,54 @@ Premature execution of scheduled actions or relying on fragile external cron/sle
 
 When reconsider:
 Do not reconsider. Durable scheduled delivery is a core requirement for recovery workflows.
+
+## D-036: Use real engine and policy in simulation
+
+Decision:
+The simulator calls the actual `evaluate_recovery()` and `evaluate_policy()` pure functions rather than mocking the strategy logic.
+
+Reason:
+Proves the real deterministic logic works at scale and provides a mathematically fair comparison against the baseline.
+
+Tradeoff:
+The simulation is tightly coupled to the engine/policy implementation.
+
+Failure mode avoided:
+Testing fake logic and drawing false confidence in the system's actual production behavior.
+
+When reconsider:
+Do not reconsider.
+
+## D-037: Label all simulation results as SIMULATED BENCHMARK
+
+Decision:
+All synthetic benchmark outputs include a strict, highly visible "SIMULATED BENCHMARK — NOT PRODUCTION DATA" label.
+
+Reason:
+Synthetic outcome probabilities are hypotheses, not real historical data. Presenting them as production performance is misleading and dangerous for financial forecasting.
+
+Tradeoff:
+Results cannot be used directly for investor or stakeholder revenue projections without heavy caveats.
+
+Failure mode avoided:
+Misleading stakeholders and making unjustified financial commitments based on synthetic data.
+
+When reconsider:
+Do not reconsider.
+
+## D-038: Strict seeded reproducibility for simulations
+
+Decision:
+Route all simulation randomness (including ID generation) through a strictly seeded `random.Random` instance.
+
+Reason:
+Business experiments must be reproducible for auditing, debugging, and A/B testing strategy changes.
+
+Tradeoff:
+Cannot use standard library functions like `uuid.uuid4()` that rely on OS entropy.
+
+Failure mode avoided:
+Flaky experiments where strategy improvements cannot be proven because the underlying test population changed between runs.
+
+When reconsider:
+Do not reconsider.
