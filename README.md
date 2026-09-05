@@ -716,7 +716,6 @@ RecoverAI includes detailed engineering documentation covering the reasoning beh
 | **Engineering Decisions** | 49 Architecture Decision Records (ADRs) explaining major engineering and pattern-selection decisions |
 | **Real Challenges** | 19 real engineering problems encountered and resolved during development |
 | **Failure Labs** | 12 deliberate experiments designed to break the system locally and demonstrate correctness guarantees |
-| **Demo Script** | Structured walkthrough for technical demonstrations and panel evaluations |
 
 ---
 
